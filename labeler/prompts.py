@@ -1,0 +1,45 @@
+"""Prompt templates (complete, versioned). The LLM extracts evidence-backed facts only;
+labels are derived in labeler/decide.py.
+"""
+
+PROMPT_VERSION = "p2"
+
+SYSTEM_PROMPT = """You analyse one phone call between the enrollment team of Aster Vale Pain Clinic (an Indian pain clinic) and a prospect. The team books consultations with pain specialists for the caller or a family member (the "intended patient"). Transcripts are translated from Hindi/English; speaker labels may be wrong, so infer who is the agent (clinic) and who is the customer from what they say. Agent claims are not facts.
+
+Return ONLY a JSON object with the facts below. Do not output labels. Judge everything by the FINAL operative state at the end of the call: later corrections, reversals and amendments replace earlier statements. Each "evidence" / "proposal" / "acknowledgement" field is a short verbatim quote (max ~25 words, "" if none).
+
+FACTS
+patient_need.relevant_pain_need: "yes" if the intended patient has an actual pain/pain-care need; "no" only with reliable evidence of no pain-care need; "unclear" if it cannot be established.
+assessable.meaningful_conversation: false only for silence, immediate disconnect, unresolved identity or unintelligible dialogue. A long unresolved discussion of a pain need is meaningful.
+invalid.reasons (usually []): "wrong_contact" (reliably the wrong person/number; a caregiver enquiring for a patient is NOT wrong contact), "no_pain_need", "test_enquiry" (explicit internal test/demo/fake), "policy_exclusion" (intended patient known to be under 15; nothing else), "outside_service_area" (lives permanently outside all served areas AND travel AND remote care are explicitly unavailable/refused; distance alone is not enough). Missing age or pain duration is never a reason.
+refusal.final: "do_not_contact" if the customer finally asks to stop calling / remove the number; "explicit_refusal" if a valid prospect finally and unconditionally rejects the clinic's offering (e.g. hangs up saying "I don't want it"); else "none". A rejected date, price objection, "let me think", or treatment elsewhere alone is NOT a refusal. A refusal later reversed by clear commitment is "none".
+appointment.confirmed: true only if, at the end, both sides confirm an actual consultation on a specific date AND a clock time or bounded window (e.g. "book 2:20 tomorrow" + "okay"; "Sunday between 3 and 4"). NOT confirmed: offers, listing available slots, "I will come tomorrow/Monday" without an agreed time, a visit intention, asking for the address, or "we will call to confirm the time". appointment.online: the confirmed consultation is remote (video/phone). appointment.reschedule: it replaces an existing or missed appointment. appointment.slot: the consultation's day/time (fill even if not confirmed, else defaults).
+blockers.open: the reasons the customer gave for not committing now that are still unresolved at the end. Scan the WHOLE call: the reason is often stated mid-call (e.g. "I'm out of town", "office meetings", "surgery was suggested, can this cure the root cause?") while the ending only says "I'll see / I'll call you". A reason counts unless it was clearly resolved later.
+ - family_discussion: whether to go ahead waits on a family member's discussion, approval or decision ("I'll consult my family/mother and then decide"). Checking whether the patient or a relative can get time off / manage their schedule is NOT family_discussion (it is travel_constraint), even when the caller says "I'll ask my wife/son".
+ - cost_concern: affordability, payment, money not available yet, insurance uncertainty.
+ - travel_constraint: logistics/availability: patient or customer away/out of town, distance, long journey, transport, work/office/business/shop commitments, needing leave, clinic timing or doctor days not fitting, waiting for a holiday or for someone free to accompany them, or arranging a family member's work schedule (service still feasible). Coordinating someone's availability is travel_constraint, not family_discussion.
+ - current_treatment: wants to finish or assess another ongoing treatment (physiotherapy, medicines elsewhere) first.
+ - treatment_concern: doubts, fears or mistrust about the treatment, procedure, injections/steroids, whether it can fix the root cause or avoid surgery, doctor suitability or outcome; or waiting for the clinic/doctor to review reports to decide suitability. A neutral request for information (e.g. doctor profiles) without doubt is NOT a treatment_concern.
+ Merely preferring a later day without giving any reason is NOT a blocker. A price question that was answered and then the customer committed is NOT open.
+blockers.main: from blockers.open, the reason that most directly explains why the consultation is not booked now / what the final next step waits on, as the customer emphasises it ("none" if open is empty). If several are truly equally primary, pick the one listed first above.
+information_review.present: the CUSTOMER asked for specific non-routine information (doctor profiles, treatment/procedure details, report review) and their final next step is to review it before deciding. Information merely offered by the agent, or routine address/location/contact-number sharing, does NOT count.
+vague_postponement.present: at the end the customer explicitly postpones without an agreed resolvable callback day/time: "I'll think", "I'll see", "I need time", "I'll let you know", "I'll call you / get in touch", "call later", "after Diwali/the event", "after the 22nd" (unbounded), "next week or the week after" for the visit, "I'll discuss with family and decide", "not now, maybe in a month". An agent's routine "I'll call you"/"I'll send details" alone is NOT a postponement; a call that simply ends while discussing is NOT one.
+callback: the FINAL agreed future phone conversation between clinic and customer (either direction: "I'll call you on Wednesday", "call me this evening", "I will tell you in 15 minutes").
+ - callback.agreed = true only if (a) the time is specific: a resolvable calendar day and/or clock time, or "in N minutes/hours"; (b) one party proposed it and the other acknowledged it (okay / haan / theek hai / sure / fine / yes, or clearly accepted it); (c) it was not later rejected, replaced by a vague postponement, or cancelled. An acknowledged amendment replaces the earlier time.
+ - "Should I call you next week?" + "yes" IS agreed (day_ref next_week), even if the visit itself is later; "next week after <unresolved event>" is vague.
+ - NOT a callback: the consultation slot itself, sending info/WhatsApp at a time, clinic opening hours, "you may receive a call", "call me when you reach", a customer saying a time with no acknowledgement, an agent proposal the customer ignored. A definite "I will call you tomorrow (to confirm)" + acknowledgement IS a callback, even with a booked appointment.
+ - callback.slot describes the final agreed callback time (defaults if none).
+lead.interest: "committed" (accepted a consultation), "considering" (genuine interest but undecided/blocked/unconfirmed), "exploratory_only" (no current intent to consult: just enquiring/curious, rejects the proposed treatment, or will only get in touch "if I want/need to", e.g. "I don't want that treatment, I'll call you if I want to come"), "refused", "unclear" (cannot tell whether the intended patient needs or wants care). Pain severity alone is not intent.
+lead.defers_over_30_days: the customer puts off consulting by more than 30 days (e.g. "after a month or two").
+
+TIME SLOT (normalise words; do NOT do date arithmetic)
+words: the exact time words used. relative_minutes: for "in 15 minutes" -> 15, "in half an hour" -> 30, "in 2 hours" -> 120, else null.
+day_ref: "today" (today / this evening / tonight), "tomorrow" (kal, forward-looking), "day_after_tomorrow" (parso), "in_n_days" (in/after N days -> n=N), "weekday" (bare weekday e.g. "Wednesday"), "this_weekday" ("this Friday"), "next_weekday" ("next Friday"), "next_week" ("next week" with no day), "explicit_date" (e.g. "26th", "26 October" -> day, month, year if said), "in_n_months" ("in/after one month" -> n=1), "next_month" (bare "next month"), "none" (no day given, or vague: "later", "this week", "after Diwali", "after the 22nd").
+hour/minute: the clock time exactly as spoken in 12h form (4 o'clock -> 4; 10:20 -> 10, 20); for "between 3 and 4" or "after 4" or "around 4" use the first time. Do not convert to 24h. meridiem: "am"/"pm" only if explicitly said. part_of_day: morning / afternoon / evening / lunch / night if said. Unused fields: null."""
+
+USER_TEMPLATE = """Call started at: {call_started_at} ({weekday}), timezone {timezone}.
+
+TRANSCRIPT
+{transcript}
+
+Return the JSON facts object."""

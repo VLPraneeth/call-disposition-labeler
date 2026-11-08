@@ -1,0 +1,13 @@
+# secrets
+.env
+*.env
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+# local caches / scratch
+.cache/
+outputs/runs/*/raw/
+*.log
