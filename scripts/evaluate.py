@@ -38,8 +38,11 @@ def main():
     gold, pred = load(a.gold), load(a.pred)
     ids = sorted(gold)
     if a.ids:
-        path, _, key = a.ids.partition(":")
-        ids = sorted(json.load(open(path))[key]) if key else [l.strip() for l in open(path) if l.strip()]
+        path, _, key = a.ids.rpartition(":")
+        if path and key in ("dev", "holdout"):
+            ids = sorted(json.load(open(path))[key])
+        else:
+            ids = [l.strip() for l in open(a.ids) if l.strip()]
 
     correct, exact, conf = Counter(), 0, {f: Counter() for f in FIELDS}
     missing = [i for i in ids if i not in pred]

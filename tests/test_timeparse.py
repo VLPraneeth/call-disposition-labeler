@@ -129,3 +129,35 @@ class TestDayOffset(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRepairSlot(unittest.TestCase):
+    """repair_slot fills fields the model left empty, from its verbatim quote."""
+    from labeler.timeparse import repair_slot as _r
+
+    def r(self, **kw):
+        from labeler.timeparse import repair_slot
+        return resolve_slot(repair_slot(slot(**kw)), "2026-10-15T18:28:03+05:30")  # Thursday
+
+    def test_explicit_date_missing_day(self):
+        self.assertEqual(self.r(words="the 26th", day_ref="explicit_date"), "2026-10-26T11:00:00+05:30")
+
+    def test_parso_shaam(self):
+        self.assertEqual(self.r(words="parso shaam ko"), "2026-10-17T18:00:00+05:30")
+
+    def test_weekday_from_words(self):
+        self.assertEqual(self.r(words="next Friday", day_ref="next_weekday"), "2026-10-23T11:00:00+05:30")
+        self.assertEqual(self.r(words="on Wednesday"), "2026-10-21T11:00:00+05:30")
+
+    def test_in_two_hours_from_words(self):
+        self.assertEqual(self.r(words="in two hours"), "2026-10-15T20:28:03+05:30")
+
+    def test_unbounded_after_stays_vague(self):
+        self.assertIsNone(self.r(words="after the 22nd"))
+        self.assertIsNone(self.r(words="after Diwali"))
+
+    def test_does_not_override_model_values(self):
+        self.assertEqual(self.r(words="tomorrow evening", day_ref="tomorrow", hour=5), "2026-10-16T17:00:00+05:30")
+
+    def test_clock_from_words(self):
+        self.assertEqual(self.r(words="tomorrow at 4 pm"), "2026-10-16T16:00:00+05:30")

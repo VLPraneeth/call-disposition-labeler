@@ -52,8 +52,9 @@ def _parse_duration(s: str | None) -> float | None:
 
 
 class GroqClient:
-    def __init__(self, api_key: str, timeout: float = 120.0, max_retries: int = 6):
+    def __init__(self, api_key: str, timeout: float = 120.0, max_retries: int = 6, max_daily_wait: float = 1800.0):
         self.api_key, self.timeout, self.max_retries = api_key, timeout, max_retries
+        self.max_daily_wait = max_daily_wait  # wait (instead of failing) when a daily quota frees up within this many seconds
         self._lock = threading.Lock()
         self._not_before = 0.0  # shared pacing gate across threads
 
@@ -91,7 +92,13 @@ class GroqClient:
                     hdr = {k.lower(): v for k, v in (e.headers or {}).items()}
                     wait = _parse_duration(hdr.get("retry-after") and hdr["retry-after"] + "s") \
                         or _parse_duration(hdr.get("x-ratelimit-reset-tokens")) or (2 ** attempt)
-                    if "tokens per day" in payload.lower() or "(tpd)" in payload.lower():
+                    if "per day" in payload.lower() or "(tpd)" in payload.lower() or "(rpd)" in payload.lower():
+                        m = re.search(r"try again in ([\dhms.]+)", payload)
+                        daily_wait = _parse_duration(m.group(1)) if m else None
+                        if daily_wait is not None and daily_wait <= self.max_daily_wait:
+                            print(f"  daily limit reached; waiting {daily_wait:.0f}s as instructed by Groq", flush=True)
+                            self._push_gate(daily_wait + 2)
+                            continue
                         raise GroqError("Daily token limit reached: " + payload)
                     wait = min(wait + random.uniform(0.2, 1.5), 90)
                     self._push_gate(wait)

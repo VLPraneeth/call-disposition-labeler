@@ -11,3 +11,4 @@ venv/
 .cache/
 outputs/runs/*/raw/
 *.log
+outputs/smoke*

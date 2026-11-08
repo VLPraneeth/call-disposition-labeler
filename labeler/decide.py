@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, time, timedelta
 
-from .timeparse import IST, day_offset, format_ts, parse_call_time, resolve_slot
+from .timeparse import IST, day_offset, format_ts, parse_call_time, repair_slot, resolve_slot
 
 # SUB tie-break orders
 INVALID_ORDER = ["test_enquiry", "wrong_contact", "no_pain_need", "policy_exclusion", "outside_service_area"]
@@ -38,6 +38,8 @@ def decide(facts: dict, call_started_at: str) -> dict:
     blockers = facts["blockers"]
 
     # Specific callback (F3, F4-F6, F10-F12): must be agreed AND resolve to a future timestamp.
+    facts["callback"]["slot"] = repair_slot(facts["callback"]["slot"])
+    facts["appointment"]["slot"] = repair_slot(facts["appointment"]["slot"])
     callback_ts = resolve_slot(facts["callback"]["slot"], call_started_at) if facts["callback"]["agreed"] else None
     if facts["callback"]["agreed"] and callback_ts is None:
         trace.append("callback marked agreed but slot unresolvable/past -> not specific (F6)")

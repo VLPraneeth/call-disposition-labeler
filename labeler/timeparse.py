@@ -11,6 +11,7 @@ so no tz database is needed - this keeps the runner dependency-free on Windows t
 from __future__ import annotations
 
 import calendar
+import re
 from datetime import date, datetime, time, timedelta, timezone
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -135,6 +136,82 @@ def resolve_date(slot: dict, call: datetime, clock: tuple[int, int] | None) -> d
     if ref == "next_month":
         return _add_months(today.replace(day=1), 1)
     return None
+
+
+_NUM_WORDS = {"one": 1, "a": 1, "an": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+              "eight": 8, "nine": 9, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30, "forty-five": 45}
+
+
+def _num(tok: str) -> int | None:
+    return int(tok) if tok.isdigit() else _NUM_WORDS.get(tok)
+
+
+def repair_slot(slot: dict | None) -> dict | None:
+    """Fill fields the LLM left empty from the verbatim `words` of the slot.
+
+    The model sometimes quotes the time correctly ("26th", "parso shaam") but leaves the
+    structured fields incomplete. This deterministic backup only FILLS missing fields; it never
+    overrides a value the model set. Unbounded "after <date/event>" phrases stay vague (F10).
+    """
+    if not slot:
+        return slot
+    s = dict(slot)
+    w = (s.get("words") or "").lower()
+    if not w:
+        return s
+    unbounded_after = re.search(r"\bafter\b(?!\s+(tomorrow|\d+\s*(days?|hours?|minutes?|mins?)))", w) is not None
+    ref = s.get("day_ref") or "none"
+
+    if s.get("relative_minutes") is None:
+        m = re.search(r"\b(?:in|after)\s+(half an hour|\d+|an?|one|two|three|four|five|ten|fifteen|twenty|thirty|forty-five)\s*(minutes?|mins?|hours?|hrs?)\b", w)
+        if m:
+            if m.group(1) == "half an hour":
+                s["relative_minutes"] = 30
+            elif _num(m.group(1)) is not None:
+                n = _num(m.group(1))
+                s["relative_minutes"] = n * 60 if m.group(2).startswith("h") else n
+        elif "half an hour" in w or "half hour" in w:
+            s["relative_minutes"] = 30
+
+    needs_day = ref == "none" or (ref == "explicit_date" and s.get("day") is None) or \
+        (ref in ("weekday", "this_weekday", "next_weekday") and not s.get("weekday")) or \
+        (ref in ("in_n_days", "in_n_months") and s.get("n") is None)
+    if needs_day and not unbounded_after:
+        wd = re.search(r"\b(next|this|coming)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", w)
+        dnum = re.search(r"\b(\d{1,2})\s*(st|nd|rd|th)\b", w)
+        ndays = re.search(r"\b(?:in|after)\s+(\d+|one|two|three|four|five|six|seven|ten)\s+days?\b", w)
+        if ref in ("explicit_date", "none") and dnum:
+            s.update(day_ref="explicit_date", day=int(dnum.group(1)))
+        elif wd:
+            s["weekday"] = wd.group(2)
+            if ref not in ("weekday", "this_weekday", "next_weekday"):
+                s["day_ref"] = {"next": "next_weekday", "this": "this_weekday"}.get(wd.group(1), "weekday")
+        elif ndays and _num(ndays.group(1)) is not None:
+            s.update(day_ref="in_n_days", n=_num(ndays.group(1)))
+        elif ref == "none":
+            if "day after tomorrow" in w or "parso" in w:
+                s["day_ref"] = "day_after_tomorrow"
+            elif "tomorrow" in w or re.search(r"\bkal\b", w):
+                s["day_ref"] = "tomorrow"
+            elif re.search(r"\b(today|tonight|this evening|this afternoon|this morning|aaj)\b", w):
+                s["day_ref"] = "today"
+            elif re.fullmatch(r"\s*(on\s+)?next week\s*", w):
+                s["day_ref"] = "next_week"
+
+    if s.get("part_of_day") is None:
+        for pat, part in ((r"morning|subah", "morning"), (r"afternoon|dopahar", "afternoon"),
+                          (r"evening|shaam|sham\b", "evening"), (r"tonight|night|raat", "night"), (r"lunch", "lunch")):
+            if re.search(pat, w):
+                s["part_of_day"] = part
+                break
+    if s.get("hour") is None and s.get("relative_minutes") is None:
+        m = re.search(r"\b(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?|o'?clock|baje)", w)
+        if m:
+            s["hour"] = int(m.group(1))
+            s["minute"] = int(m.group(2)) if m.group(2) else s.get("minute")
+            if s.get("meridiem") is None and m.group(3)[0] in "ap":
+                s["meridiem"] = "am" if m.group(3)[0] == "a" else "pm"
+    return s
 
 
 def resolve_slot(slot: dict | None, call_started_at: str) -> str | None:

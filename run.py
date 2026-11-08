@@ -54,6 +54,8 @@ def main(argv=None) -> int:
     p.add_argument("--workers", type=int, default=1, help="parallel requests (raise on paid Groq tiers)")
     p.add_argument("--timeout", type=float, default=120.0, help="per-request timeout, seconds")
     p.add_argument("--retries", type=int, default=6, help="HTTP retries per request (429/5xx/network)")
+    p.add_argument("--max-daily-wait", type=float, default=1800.0,
+                   help="if a daily Groq quota is hit and frees up within this many seconds, wait instead of falling back")
     p.add_argument("--ids", default=None, help="optional file with one transcript_id per line (or JSON list) to restrict the run")
     p.add_argument("--cache-dir", default=None, help="optional response cache for development (off by default)")
     p.add_argument("--log", default=None, help="optional JSONL with per-record facts, trace, usage (default: <output>.log.jsonl)")
@@ -66,7 +68,7 @@ def main(argv=None) -> int:
         recs = [r for r in recs if r["transcript_id"] in wanted]
 
     s = Settings(model=a.model, reasoning_effort=None if a.reasoning_effort in (None, "none") else a.reasoning_effort)
-    labeler = Labeler(GroqClient(load_api_key(), timeout=a.timeout, max_retries=a.retries), s, cache_dir=a.cache_dir)
+    labeler = Labeler(GroqClient(load_api_key(), timeout=a.timeout, max_retries=a.retries, max_daily_wait=a.max_daily_wait), s, cache_dir=a.cache_dir)
 
     t0 = time.time()
     results: dict[str, tuple[dict, dict]] = {}
