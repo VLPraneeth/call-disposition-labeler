@@ -102,6 +102,25 @@ FACTS_SCHEMA = _obj({
     }),
 })
 
+FOLLOWUP_SUBS = ["Family Discussion", "Cost Concern", "Travel Constraint", "Current Treatment", "Treatment Concern",
+                 "Specific Callback", "Information Requested", "Vague Deferral", "Further Discussion"]
+FOLLOWUP = _obj({"evidence": {"type": "string"}, "label": {"type": "string", "enum": FOLLOWUP_SUBS}})
+NEXT_KINDS = ["specific_callback", "vague_postponement", "none"]
+NEXT_STEP = _obj({"evidence": {"type": "string"}, "kind": {"type": "string", "enum": NEXT_KINDS}})
+
+
+def facts_schema(prompt_version: str) -> dict:
+    """p3: FACTS_SCHEMA. p7: + final `followup` (policy-verbatim sub-disposition). p8: p7 + `next_step`."""
+    if prompt_version in ("p7", "p8"):
+        s = copy.deepcopy(FACTS_SCHEMA)
+        s["properties"]["followup"] = FOLLOWUP
+        if prompt_version == "p8":
+            s["properties"]["next_step"] = NEXT_STEP
+        s["required"] = list(s["properties"])
+        return s
+    return FACTS_SCHEMA
+
+
 EMPTY_SLOT = {k: None for k in TIME_SLOT["properties"]}
 EMPTY_SLOT.update({"words": "", "day_ref": "none"})
 
@@ -133,7 +152,7 @@ def _b(v) -> bool:
 def normalise_facts(raw: dict) -> dict:
     """Coerce an LLM facts object into a well-formed dict (tolerant of minor schema drift)."""
     g = lambda *ks: _dig(raw, ks)
-    return {
+    out = {
         "patient_need": {"evidence": str(g("patient_need", "evidence") or ""),
                          "relevant_pain_need": _enum(g("patient_need", "relevant_pain_need"), ["yes", "no", "unclear"], "unclear")},
         "assessable": {"evidence": str(g("assessable", "evidence") or ""),
@@ -162,6 +181,14 @@ def normalise_facts(raw: dict) -> dict:
                  "interest": _enum(g("lead", "interest"), INTEREST, "unclear"),
                  "defers_over_30_days": _b(g("lead", "defers_over_30_days"))},
     }
+    if isinstance(raw.get("followup"), dict):
+        lab = g("followup", "label")
+        out["followup"] = {"evidence": str(g("followup", "evidence") or ""),
+                           "label": lab if lab in FOLLOWUP_SUBS else None}
+    if isinstance(raw.get("next_step"), dict):
+        k = g("next_step", "kind")
+        out["next_step"] = {"evidence": str(g("next_step", "evidence") or ""), "kind": k if k in NEXT_KINDS else None}
+    return out
 
 
 def _dig(d, keys):

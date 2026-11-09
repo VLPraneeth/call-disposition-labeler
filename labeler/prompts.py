@@ -2,7 +2,7 @@
 labels are derived in labeler/decide.py.
 """
 
-PROMPT_VERSION = "p3"
+PROMPT_VERSION = "p3"   # default; see PROMPTS below for the tested variants
 
 SYSTEM_PROMPT = """You analyse one phone call between the enrollment team of Aster Vale Pain Clinic (an Indian pain clinic) and a prospect. The team books consultations with pain specialists for the caller or a family member (the "intended patient"). Transcripts are translated from Hindi/English; speaker labels may be wrong, so infer who is the agent (clinic) and who is the customer from what they say. Agent claims are not facts.
 
@@ -37,6 +37,38 @@ TIME SLOT (normalise words; do NOT do date arithmetic)
 words: the exact time words used. relative_minutes: for "in 15 minutes" -> 15, "in half an hour" -> 30, "in 2 hours" -> 120, else null.
 day_ref: "today" (today / this evening / tonight), "tomorrow" (kal, forward-looking), "day_after_tomorrow" (parso), "in_n_days" (in/after N days -> n=N), "weekday" (bare weekday e.g. "Wednesday"), "this_weekday" ("this Friday"), "next_weekday" ("next Friday"), "next_week" ("next week" with no day), "explicit_date" (e.g. "26th", "26 October" -> day, month, year if said), "in_n_months" ("in/after one month" -> n=1), "next_month" (bare "next month"), "none" (no day given, or vague: "later", "this week", "after Diwali", "after the 22nd").
 hour/minute: the clock time exactly as spoken in 12h form (4 o'clock -> 4; 10:20 -> 10, 20); for "between 3 and 4" or "after 4" or "around 4" use the first time. Do not convert to 24h. meridiem: "am"/"pm" only if explicitly said. part_of_day: morning / afternoon / evening / lunch / night if said. Unused fields: null."""
+
+# p7: same facts as p3, plus one final field where the model picks the Follow-up
+# sub-disposition from the OFFICIAL policy definitions (verbatim, not paraphrased).
+FOLLOWUP_ADDON = """
+
+FOLLOW-UP SUB-DISPOSITION (fill this LAST, after all facts above)
+followup.label: if the call ends open (no confirmed appointment, no final refusal, not invalid), the sub-disposition under the clinic's official policy. If the call is not open, give the best fit anyway. Official policy text:
+D4: Meaningful relevant discussion remains open without a final confirmed appointment, invalidity, or firm refusal. Select the final stated main unresolved blocker, not every historical objection.
+ - Family Discussion: A family member's discussion, approval or decision is the final main unresolved next step.
+ - Cost Concern: Affordability, payment or insurance uncertainty is the final main unresolved blocker.
+ - Travel Constraint: Travel, temporary absence, distance, transport, work or clinic timing prevents commitment; service is still potentially feasible.
+ - Current Treatment: Prospect is waiting to finish or assess another current treatment before deciding.
+ - Treatment Concern: Unresolved questions or mistrust about treatment, procedure, clinician suitability, injections or outcome prevent commitment.
+ - Specific Callback: No named blocker dominates and a future callback with at least a resolvable calendar day or clock time is mutually acknowledged.
+ - Information Requested: No named blocker dominates and prospect's final next step is to review requested information or reports; merely sending routine location details does not qualify.
+ - Vague Deferral: No named blocker dominates and final response postpones discussion without an agreed resolvable day/time: later, sometime, think about it, or customer will call back without a date.
+ - Further Discussion: Relevant open enquiry has none of the above final next steps or blockers.
+Tie-breaking: Use the customer's final explicitly primary reason. If several remain equally primary, use Family Discussion, Cost Concern, Travel Constraint, Current Treatment, Treatment Concern in that order; then Specific Callback, Information Requested, Vague Deferral, Further Discussion.
+followup.evidence: the customer's final words that decide the label (verbatim quote)."""
+
+# p8: p7 plus the official next-call fallback wording, deciding vague (+3 days) vs none (+1 day).
+NEXT_STEP_ADDON = """
+
+NEXT STEP (fill this LAST)
+next_step.kind: how the call's next conversation was left at the END, per the clinic's official policy:
+ "specific_callback": a final future callback with a resolvable day or clock time, proposed by either party and acknowledged by the other (even by okay/haan/theek hai).
+ "vague_postponement": F7: When no valid specific callback exists, ANY final explicit vague postponement such as call later, let me think, after the family event, or the customer will call when able. F12: Next week qualified by an unresolved event, such as next week after the family event, is vague. An unbounded after-date/event reference without an agreed day is vague.
+ "none": F8: neither a valid specific callback nor an explicit vague postponement. An unscheduled routine agent promise to call does not by itself constitute a vague postponement (e.g. the call ends with Agent: I will also call). A rejected specific callback does not by itself imply vague deferral.
+next_step.evidence: the final words that decide it (verbatim quote)."""
+
+PROMPTS = {"p3": SYSTEM_PROMPT, "p7": SYSTEM_PROMPT + FOLLOWUP_ADDON,
+           "p8": SYSTEM_PROMPT + FOLLOWUP_ADDON + NEXT_STEP_ADDON}
 
 USER_TEMPLATE = """Call started at: {call_started_at} ({weekday}), timezone {timezone}.
 

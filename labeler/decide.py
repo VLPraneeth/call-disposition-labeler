@@ -5,9 +5,12 @@ specific transcript; all of it follows the published policy.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, time, timedelta
 
 from .timeparse import IST, day_offset, format_ts, parse_call_time, repair_slot, resolve_slot
+
+RULES = {"f12_event": True, "llm_followup": True, "llm_next_step": True}
 
 # SUB tie-break orders
 INVALID_ORDER = ["test_enquiry", "wrong_contact", "no_pain_need", "policy_exclusion", "outside_service_area"]
@@ -25,8 +28,12 @@ def _days_at_11(call_started_at: str, days: int) -> str:
     return format_ts(datetime.combine(call.date() + timedelta(days=days), time(11, 0), IST))
 
 
-def decide(facts: dict, call_started_at: str) -> dict:
-    """Return {'disposition','sub_disposition','lead_quality','next_call_at','trace'}."""
+def decide(facts: dict, call_started_at: str, rules: dict | None = None) -> dict:
+    """Return {'disposition','sub_disposition','lead_quality','next_call_at','trace'}.
+
+    `rules` toggles individual rules (default RULES: all on) so each can be measured on its own.
+    """
+    rules = {**RULES, **(rules or {})}
     trace = []
     need = facts["patient_need"]["relevant_pain_need"]
     meaningful = facts["assessable"]["meaningful_conversation"]
@@ -36,12 +43,28 @@ def decide(facts: dict, call_started_at: str) -> dict:
     refusal = facts["refusal"]["final"]
     appt = facts["appointment"]
     blockers = facts["blockers"]
+    cb = facts["callback"]
+    vague = bool(facts["vague_postponement"]["present"])
+    kind = (facts.get("next_step") or {}).get("kind") if rules["llm_next_step"] else None
+    if kind in ("vague_postponement", "none"):
+        vague = kind == "vague_postponement"                                     # p8: policy-verbatim F7/F8 choice
 
     # Specific callback (F3, F4-F6, F10-F12): must be agreed AND resolve to a future timestamp.
-    facts["callback"]["slot"] = repair_slot(facts["callback"]["slot"])
+    cb["slot"] = repair_slot(cb["slot"])
     facts["appointment"]["slot"] = repair_slot(facts["appointment"]["slot"])
-    callback_ts = resolve_slot(facts["callback"]["slot"], call_started_at) if facts["callback"]["agreed"] else None
-    if facts["callback"]["agreed"] and callback_ts is None:
+    agreed = bool(cb["agreed"])
+
+    # F12: "next week" qualified by an unresolved event ("next week after Dussehra") is vague -> F7.
+    words = (cb["slot"].get("words") or "").lower()
+    if rules["f12_event"] and cb["proposal"] and cb["acknowledgement"] and \
+            re.search(r"\bnext week\b.*\bafter\b|\bafter\b.*\bnext week\b", words):
+        agreed = False
+        if not vague:
+            vague = True
+            trace.append("next week qualified by an unresolved event -> vague postponement (F12/F7)")
+
+    callback_ts = resolve_slot(cb["slot"], call_started_at) if agreed else None
+    if agreed and callback_ts is None:
         trace.append("callback marked agreed but slot unresolvable/past -> not specific (F6)")
 
     # ---- Disposition: precedence Invalid > Not Interested > Appointment > Follow-up > Unable (D6) ----
@@ -61,13 +84,16 @@ def decide(facts: dict, call_started_at: str) -> dict:
         if main is None and open_:
             main = min(open_, key=BLOCKER_ORDER.index)                           # SUB tie-break among equals
             trace.append(f"no main blocker named; tie-break over {open_}")
-        if main:
+        llm_sub = (facts.get("followup") or {}).get("label") if rules["llm_followup"] else None
+        if llm_sub and (llm_sub != "Specific Callback" or callback_ts):
+            sub = llm_sub                                                        # p7: policy-verbatim choice
+        elif main:
             sub = BLOCKER_LABEL[main]
         elif callback_ts:
             sub = "Specific Callback"
         elif facts["information_review"]["present"]:
             sub = "Information Requested"
-        elif facts["vague_postponement"]["present"]:
+        elif vague:
             sub = "Vague Deferral"
         else:
             sub = "Further Discussion"
@@ -106,7 +132,7 @@ def decide(facts: dict, call_started_at: str) -> dict:
         nca = callback_ts                                                        # F3 (also with appointment)
     elif disp == "Appointment Scheduled":
         nca = None                                                               # F8
-    elif facts["vague_postponement"]["present"]:
+    elif vague:
         nca = _days_at_11(call_started_at, 3)                                    # F7
     else:
         nca = _days_at_11(call_started_at, 1)                                    # F8

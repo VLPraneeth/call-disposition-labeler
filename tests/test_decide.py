@@ -37,6 +37,31 @@ class TestDecide(unittest.TestCase):
         pred = {"transcript_id": "X", **{k: out[k] for k in ("disposition", "sub_disposition", "lead_quality", "next_call_at")}}
         self.assertEqual(validate_output(pred), [])
 
+    def test_f12_next_week_after_event_is_vague(self):
+        f = facts(callback__proposal="I'll call you next week after Dussehra", callback__acknowledgement="Okay",
+                  callback__agreed=False, callback__slot=slot(words="next week after Dussehra", day_ref="next_week"))
+        self.check(f, "Follow-up Required", "Vague Deferral", "Medium", "2026-11-12T11:00:00+05:30")
+
+    def test_plain_next_week_is_specific(self):
+        f = facts(callback__proposal="Should I call next week?", callback__acknowledgement="Yes",
+                  callback__agreed=True, callback__slot=slot(words="next week", day_ref="next_week"))
+        self.check(f, "Follow-up Required", "Specific Callback", "Medium", "2026-11-16T11:00:00+05:30")
+
+    def test_p7_followup_label_used(self):
+        f = facts(blockers__open=["travel_constraint"], blockers__main="travel_constraint")
+        f["followup"] = {"evidence": "", "label": "Treatment Concern"}
+        self.check(f, "Follow-up Required", "Treatment Concern", "Medium", "2026-11-10T11:00:00+05:30")
+
+    def test_p7_specific_callback_label_needs_valid_callback(self):
+        f = facts(vague_postponement__present=True)
+        f["followup"] = {"evidence": "", "label": "Specific Callback"}
+        self.check(f, "Follow-up Required", "Vague Deferral", "Medium", "2026-11-12T11:00:00+05:30")
+
+    def test_p8_next_step_overrides_vague_flag(self):
+        f = facts(vague_postponement__present=False)
+        f["next_step"] = {"evidence": "", "kind": "vague_postponement"}
+        self.check(f, "Follow-up Required", "Vague Deferral", "Medium", "2026-11-12T11:00:00+05:30")
+
     def test_ex1_specific_callback(self):
         f = facts(callback__agreed=True, callback__slot=slot(day_ref="tomorrow", hour=4))
         self.check(f, "Follow-up Required", "Specific Callback", "Medium", "2026-11-10T16:00:00+05:30")

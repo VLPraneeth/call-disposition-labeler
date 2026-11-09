@@ -16,41 +16,41 @@ from pathlib import Path
 
 from .decide import _days_at_11, decide
 from .groq_client import GroqClient, GroqError
-from .prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE
-from .schema import FACTS_SCHEMA, OUTPUT_KEYS, normalise_facts, validate_output
+from .prompts import PROMPT_VERSION, PROMPTS, USER_TEMPLATE
+from .schema import OUTPUT_KEYS, facts_schema, normalise_facts, validate_output
 from .timeparse import parse_call_time
 
 
 @dataclass
 class Settings:
     model: str = "openai/gpt-oss-120b"
-    temperature: float = 0.0
+    temperature: float = 0.6                  # >0 so the 5 samples differ (self-consistency vote)
     top_p: float = 1.0
     seed: int = 7
     reasoning_effort: str | None = "medium"   # gpt-oss only; None for other models
     max_completion_tokens: int = 4000
     structured_output: str = "json_schema"    # "json_schema" (strict) | "json_object"
     parse_attempts: int = 2                   # LLM re-asks when output is not valid JSON
-    samples: int = 1                          # independent samples per call; >1 = per-field majority vote
+    samples: int = 5                          # independent samples per call; >1 = per-field majority vote
     prompt_version: str = PROMPT_VERSION
     extra: dict = field(default_factory=dict)
 
 
-def build_messages(rec: dict) -> list[dict]:
+def build_messages(rec: dict, prompt_version: str = PROMPT_VERSION) -> list[dict]:
     call = parse_call_time(rec["call_started_at"])
     user = USER_TEMPLATE.format(call_started_at=rec["call_started_at"], weekday=call.strftime("%A"),
                                 timezone=rec.get("timezone") or "Asia/Kolkata", transcript=rec["transcript"])
-    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
+    return [{"role": "system", "content": PROMPTS[prompt_version]}, {"role": "user", "content": user}]
 
 
 def build_body(rec: dict, s: Settings) -> dict:
-    body = {"model": s.model, "messages": build_messages(rec), "temperature": s.temperature, "top_p": s.top_p,
+    body = {"model": s.model, "messages": build_messages(rec, s.prompt_version), "temperature": s.temperature, "top_p": s.top_p,
             "seed": s.seed, "max_completion_tokens": s.max_completion_tokens}
     if s.reasoning_effort and "gpt-oss" in s.model:
         body["reasoning_effort"] = s.reasoning_effort
     if s.structured_output == "json_schema":
         body["response_format"] = {"type": "json_schema",
-                                   "json_schema": {"name": "call_facts", "strict": True, "schema": FACTS_SCHEMA}}
+                                   "json_schema": {"name": "call_facts", "strict": True, "schema": facts_schema(s.prompt_version)}}
     else:
         body["response_format"] = {"type": "json_object"}
     body.update(s.extra)
@@ -113,17 +113,13 @@ class Labeler:
                 "usage": {k: sum(m["usage"][k] for _, m in runs) for k in ("prompt_tokens", "completion_tokens")},
                 "attempts": sum(m["attempts"] for _, m in runs), "fallback": not ok,
                 "error": "; ".join(str(m["error"]) for _, m in runs if m["error"]) or None,
-                "samples": [{k: p[k] for k in OUTPUT_KEYS[1:]} for p, _ in runs]}
+                "samples": [{k: p[k] for k in OUTPUT_KEYS[1:]} for p, _ in runs],
+                "sample_facts": [m.get("facts") for _, m in runs]}
         if not ok:
             meta["seconds"] = round(time.time() - t0, 2)
             return fallback_prediction(rec), meta
-        disp = Counter(p["disposition"] for p, _ in ok).most_common(1)[0][0]  # ties -> earliest sample
-        group = [p for p, _ in ok if p["disposition"] == disp]
-        pred = {"transcript_id": rec["transcript_id"], "disposition": disp}
-        for k in OUTPUT_KEYS[2:]:
-            pred[k] = Counter(json.dumps(p[k]) for p in group).most_common(1)[0][0]
-            pred[k] = json.loads(pred[k])
-        first = next(m for p, m in ok if p["disposition"] == disp)
+        pred = vote(rec["transcript_id"], [p for p, _ in ok])
+        first = next(m for p, m in ok if p["disposition"] == pred["disposition"])
         meta.update(facts=first["facts"], trace=first["trace"], seconds=round(time.time() - t0, 2))
         return pred, meta
 
@@ -159,6 +155,17 @@ class Labeler:
                 meta["error"] = f"parse/validate: {e}"
         meta.update(fallback=True, seconds=round(time.time() - t0, 2))
         return fallback_prediction(rec), meta
+
+
+def vote(transcript_id: str, preds: list[dict]) -> dict:
+    """Majority disposition (ties -> earliest sample), then per-field majority among the samples
+    with that disposition, so the (disposition, sub_disposition) pair stays valid."""
+    disp = Counter(p["disposition"] for p in preds).most_common(1)[0][0]
+    group = [p for p in preds if p["disposition"] == disp]
+    out = {"transcript_id": transcript_id, "disposition": disp}
+    for k in OUTPUT_KEYS[2:]:
+        out[k] = json.loads(Counter(json.dumps(p[k]) for p in group).most_common(1)[0][0])
+    return out
 
 
 def settings_dict(s: Settings) -> dict:
