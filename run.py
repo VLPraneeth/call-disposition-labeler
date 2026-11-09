@@ -53,6 +53,8 @@ def main(argv=None) -> int:
     p.add_argument("--api-url", default=API_URL, help="OpenAI-compatible chat-completions URL (default: Groq)")
     p.add_argument("--api-key-env", default="GROQ_API_KEY", help="environment variable holding the API key")
     p.add_argument("--reasoning-effort", default=Settings.reasoning_effort, help="gpt-oss: low|medium|high; 'none' to omit")
+    p.add_argument("--max-completion-tokens", type=int, default=Settings.max_completion_tokens)
+    p.add_argument("--samples", type=int, default=1, help="samples per call with different seeds; >1 = majority vote")
     p.add_argument("--workers", type=int, default=1, help="parallel requests (raise on paid Groq tiers)")
     p.add_argument("--timeout", type=float, default=120.0, help="per-request timeout, seconds")
     p.add_argument("--retries", type=int, default=6, help="HTTP retries per request (429/5xx/network)")
@@ -69,7 +71,7 @@ def main(argv=None) -> int:
         wanted = set(json.loads(txt)) if txt.startswith("[") else {l.strip() for l in txt.splitlines() if l.strip()}
         recs = [r for r in recs if r["transcript_id"] in wanted]
 
-    s = Settings(model=a.model, reasoning_effort=None if a.reasoning_effort in (None, "none") else a.reasoning_effort)
+    s = Settings(model=a.model, samples=a.samples, max_completion_tokens=a.max_completion_tokens, reasoning_effort=None if a.reasoning_effort in (None, "none") else a.reasoning_effort)
     labeler = Labeler(GroqClient(load_api_key(a.api_key_env), timeout=a.timeout, max_retries=a.retries,
                                   max_daily_wait=a.max_daily_wait, api_url=a.api_url), s, cache_dir=a.cache_dir)
 

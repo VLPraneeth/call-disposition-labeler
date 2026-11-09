@@ -26,7 +26,7 @@ python run.py --input path/to/inputs.jsonl --output path/to/predictions.jsonl
 - **Input:** JSONL with `transcript_id`, `call_started_at`, `timezone`, `transcript`. Any other field, including gold labels, is dropped before processing.
 - **Output:** JSONL, one object per input in input order, with exactly the five contract keys. `next_call_at` is `"YYYY-MM-DDTHH:MM:SS+05:30"` or JSON `null`.
 - **Run log:** `<output>.log.jsonl` with per-record extracted facts and evidence, decision trace, token usage and timings, plus a summary line with runtime, tokens and estimated cost.
-- **Optional flags:** `--workers N` (parallel requests on paid tiers), `--timeout`, `--retries`, `--max-daily-wait`, `--model`, `--reasoning-effort`, `--ids` (restrict to a list), `--cache-dir` (development response cache; off by default), `--api-url` / `--api-key-env` (any OpenAI-compatible endpoint; Groq is the default).
+- **Optional flags:** `--workers N` (parallel requests on paid tiers), `--timeout`, `--retries`, `--max-daily-wait`, `--model`, `--reasoning-effort`, `--ids` (restrict to a list), `--cache-dir` (development response cache; off by default), `--api-url` / `--api-key-env` (any OpenAI-compatible endpoint; Groq is the default), `--samples N` (majority vote over N seeds; tested, not used for the final run), `--max-completion-tokens`.
 
 Every input ID always receives a valid prediction. If the model is unreachable or returns unusable output after all retries, a documented majority-class fallback is written and flagged in the log.
 

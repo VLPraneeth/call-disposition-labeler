@@ -44,12 +44,35 @@ Where the errors fall: sub_disposition (11 calls) and next_call_at (8 calls) mak
 | `repair_slot` | Deterministic fill of missing time fields from the model's verbatim `words` (e.g. "26th" with an empty day) | Fixed AVT-017; offline, no API cost (`scripts/rescore.py`) |
 | **p3 final** | Full run on all 50 | **Dev 63.5 / 62.3 (repeat), holdout 57.8** |
 
-**What I did not do:** after the holdout was scored I made no further prompt or rule changes. The holdout errors (024, 030, 034, 038, 042, 048, 049) point at the same patterns as dev. Tuning on them would have inflated the reported number.
+### Second round: tried after the first holdout score, all rejected
+
+After the first holdout score, I ran a second round of experiments. Every change was driven **only by dev errors**: I read the 9 dev error transcripts, never the holdout ones. I also decided in advance that a change would be kept only if it held up on the holdout as well.
+
+The 9 dev errors came from 4 causes:
+1. An answered question about price, distance or timing was treated as the main blocker (013, 032).
+2. "Then I'll call you" was missed as a postponement (031).
+3. The proposer's own "okay" was counted as acknowledging the callback (041).
+4. Family vs Travel, and missed treatment doubts (018, 020, 047).
+
+| Variant | Change (policy-grounded, general) | Dev | Holdout | All 50 |
+|---|---|---|---|---|
+| p4 | A blocker is a *reason*, not an answered question; main = the "final stated main unresolved blocker, not every historical objection" (D4 wording); "customer will call back" = vague (F7); the acknowledgement must come from the *other* party (F3) | 63.3 ×2 | – | – |
+| p5 | p4, plus "an agreed callback does not cancel a blocker" (fixes a p4 regression on 004) | 64.3, 63.7, 63.0, 63.0 (4 seeds), 65.0 in the full run | **54.0** | 60.6 |
+| p5, 3-sample majority vote | per-field vote across seeds 7/107/207 | 63.0 | – | – |
+| p5, reasoning_effort=high | more reasoning | 53.2 (10/30 calls exhausted 16k tokens or timed out) | – | – |
+| p6 | p5, plus quote the customer's final words *first*, then decide | 61.8 | – | – |
+
+**Decision: keep p3.**
+- p5 averaged about +0.6 to +1.5 on dev but lost 3.8 on the holdout. It turned a clear Explicit Refusal (033) into a Cost Concern, and a Travel Constraint into Further Discussion.
+- Over all 50 calls, p5 scored 60.6 vs 61.2 for p3. That is noise-level, but not an improvement.
+- p6 fixed four of the stubborn dev calls (013, 018, 020, 047) and broke four others.
+
+**Conclusion:** with this model, prompt wording is at its noise floor. One run differs from another by about ±1 point on 30 calls, and every wording change moves borderline calls in both directions. Further gains on dev would be fitting to these 30 calls, not improving the policy reading. p4–p6 were tried after the first holdout score, so the holdout is no longer perfectly clean. I report that rather than hide it.
 
 **Next steps if continued:**
-- Self-consistency (3 samples, majority vote) on the `blockers.main` field only. It is cheap and targets the largest error class.
-- A small, labelled set of "+1d vs +3d" endings to tighten the postponement definition.
-- A second-pass check when the model outputs Explicit Refusal while a treatment concern is open.
+- More labelled data in exactly the confused boundaries: Travel vs Family, "answered question vs real blocker", and +1d vs +3d endings. This is the only way to tune without overfitting.
+- A second-pass verifier on refusals (D2 vs a conditional objection).
+- A stronger open model on Groq, if one becomes available.
 
 ## 4. Runtime, tokens and cost
 
@@ -61,7 +84,7 @@ Where the errors fall: sub_disposition (11 calls) and next_call_at (8 calls) mak
 
 - **Per call:** about 5.1k prompt and 1.6k completion tokens (most of it reasoning), about $0.0017, about 13 s sequentially.
 - **Prices:** $0.15 / $0.60 per 1M input/output tokens. This is the published price for `gpt-oss-120b` on both Groq and Fireworks, so the cost is the same on either.
-- **Total API spend for the project:** under $0.30.
+- **Total API spend for the project:** about $1.35 across all logged runs (Groq free tier plus Fireworks), including the rejected experiments.
 
 ## 5. Provider note (read this)
 

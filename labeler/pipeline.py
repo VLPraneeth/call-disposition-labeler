@@ -6,6 +6,7 @@ emitted so every input ID always gets a schema-valid prediction.
 """
 from __future__ import annotations
 
+from collections import Counter
 import hashlib
 import json
 import re
@@ -30,6 +31,7 @@ class Settings:
     max_completion_tokens: int = 4000
     structured_output: str = "json_schema"    # "json_schema" (strict) | "json_object"
     parse_attempts: int = 2                   # LLM re-asks when output is not valid JSON
+    samples: int = 1                          # independent samples per call; >1 = per-field majority vote
     prompt_version: str = PROMPT_VERSION
     extra: dict = field(default_factory=dict)
 
@@ -100,15 +102,40 @@ class Labeler:
         return resp, info
 
     def label(self, rec: dict) -> tuple[dict, dict]:
-        """Return (prediction, meta). Never raises for model/parse problems."""
+        """Return (prediction, meta). With samples > 1, run independent samples (different seeds) and take a
+        per-field majority vote among the samples that agree with the majority disposition. Never raises."""
+        if self.s.samples <= 1:
+            return self._label_once(rec, self.s.seed)
+        t0 = time.time()
+        runs = [self._label_once(rec, self.s.seed + 100 * j) for j in range(self.s.samples)]
+        ok = [(p, m) for p, m in runs if not m["fallback"]]
+        meta = {"transcript_id": rec["transcript_id"],
+                "usage": {k: sum(m["usage"][k] for _, m in runs) for k in ("prompt_tokens", "completion_tokens")},
+                "attempts": sum(m["attempts"] for _, m in runs), "fallback": not ok,
+                "error": "; ".join(str(m["error"]) for _, m in runs if m["error"]) or None,
+                "samples": [{k: p[k] for k in OUTPUT_KEYS[1:]} for p, _ in runs]}
+        if not ok:
+            meta["seconds"] = round(time.time() - t0, 2)
+            return fallback_prediction(rec), meta
+        disp = Counter(p["disposition"] for p, _ in ok).most_common(1)[0][0]  # ties -> earliest sample
+        group = [p for p, _ in ok if p["disposition"] == disp]
+        pred = {"transcript_id": rec["transcript_id"], "disposition": disp}
+        for k in OUTPUT_KEYS[2:]:
+            pred[k] = Counter(json.dumps(p[k]) for p in group).most_common(1)[0][0]
+            pred[k] = json.loads(pred[k])
+        first = next(m for p, m in ok if p["disposition"] == disp)
+        meta.update(facts=first["facts"], trace=first["trace"], seconds=round(time.time() - t0, 2))
+        return pred, meta
+
+    def _label_once(self, rec: dict, seed: int) -> tuple[dict, dict]:
         t0 = time.time()
         meta = {"transcript_id": rec["transcript_id"], "usage": {"prompt_tokens": 0, "completion_tokens": 0},
                 "attempts": 0, "fallback": False, "error": None}
-        body = build_body(rec, self.s)
+        body = {**build_body(rec, self.s), "seed": seed}
         for i in range(self.s.parse_attempts):
             try:
                 if i > 0:  # vary the seed on a re-ask so a deterministic bad output is not repeated
-                    body = {**body, "seed": self.s.seed + i}
+                    body = {**body, "seed": seed + i}
                 resp, info = self._call(body)
                 meta["attempts"] += info.get("attempts", 0)
                 meta["cached"] = info.get("cached", False)
