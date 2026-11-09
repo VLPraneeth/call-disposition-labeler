@@ -7,9 +7,5 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
-# local caches / scratch
-.cache/
-outputs/runs/*/raw/
+# local scratch
 *.log
-outputs/smoke*
-.cache_fw/

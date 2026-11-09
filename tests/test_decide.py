@@ -37,21 +37,6 @@ class TestDecide(unittest.TestCase):
         pred = {"transcript_id": "X", **{k: out[k] for k in ("disposition", "sub_disposition", "lead_quality", "next_call_at")}}
         self.assertEqual(validate_output(pred), [])
 
-    def test_d4_final_stated_blocker_wins(self):
-        # Travel stated first, a treatment doubt stated last -> Treatment Concern (D4: final stated blocker).
-        t = ("Customer: It is too far for me, I cannot travel today.\nAgent: We have a closer branch.\n"
-             "Customer: But will the injection really fix the root cause? I want only the senior doctor.")
-        f = facts(blockers__open=["travel_constraint", "treatment_concern"], blockers__main="travel_constraint",
-                  blockers__last_quotes=[{"type": "travel_constraint", "quote": "It is too far for me, I cannot travel today"},
-                                         {"type": "treatment_concern", "quote": "will the injection really fix the root cause"}])
-        self.assertEqual(decide(f, CALL, transcript=t)["sub_disposition"], "Treatment Concern")
-        # Without the transcript (or with the rule off) the model's own main blocker is kept.
-        self.assertEqual(decide(f, CALL)["sub_disposition"], "Travel Constraint")
-        self.assertEqual(decide(f, CALL, {"final_blocker": False}, t)["sub_disposition"], "Travel Constraint")
-        # A quote that is not in the transcript is ignored (only one blocker located -> model's main kept).
-        f["blockers"]["last_quotes"][1]["quote"] = "completely invented sentence that nobody said"
-        self.assertEqual(decide(f, CALL, transcript=t)["sub_disposition"], "Travel Constraint")
-
     def test_need_no_implies_no_pain_need_invalid(self):
         f = facts(patient_need__relevant_pain_need="no")
         self.check(f, "Invalid Lead", "No Pain Need", "Not Qualified", None)
@@ -65,21 +50,6 @@ class TestDecide(unittest.TestCase):
         f = facts(callback__proposal="Should I call next week?", callback__acknowledgement="Yes",
                   callback__agreed=True, callback__slot=slot(words="next week", day_ref="next_week"))
         self.check(f, "Follow-up Required", "Specific Callback", "Medium", "2026-11-16T11:00:00+05:30")
-
-    def test_p7_followup_label_used(self):
-        f = facts(blockers__open=["travel_constraint"], blockers__main="travel_constraint")
-        f["followup"] = {"evidence": "", "label": "Treatment Concern"}
-        self.check(f, "Follow-up Required", "Treatment Concern", "Medium", "2026-11-10T11:00:00+05:30")
-
-    def test_p7_specific_callback_label_needs_valid_callback(self):
-        f = facts(vague_postponement__present=True)
-        f["followup"] = {"evidence": "", "label": "Specific Callback"}
-        self.check(f, "Follow-up Required", "Vague Deferral", "Medium", "2026-11-12T11:00:00+05:30")
-
-    def test_p8_next_step_overrides_vague_flag(self):
-        f = facts(vague_postponement__present=False)
-        f["next_step"] = {"evidence": "", "kind": "vague_postponement"}
-        self.check(f, "Follow-up Required", "Vague Deferral", "Medium", "2026-11-12T11:00:00+05:30")
 
     def test_ex1_specific_callback(self):
         f = facts(callback__agreed=True, callback__slot=slot(day_ref="tomorrow", hour=4))

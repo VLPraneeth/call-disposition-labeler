@@ -52,9 +52,8 @@ def _parse_duration(s: str | None) -> float | None:
 
 
 class GroqClient:
-    def __init__(self, api_key: str, timeout: float = 120.0, max_retries: int = 6, max_daily_wait: float = 1800.0,
-                 api_url: str = API_URL):
-        self.api_url = api_url  # any OpenAI-compatible endpoint; Groq by default
+    def __init__(self, api_key: str, timeout: float = 120.0, max_retries: int = 6, max_daily_wait: float = 1800.0):
+        self.api_url = API_URL
         self.api_key, self.timeout, self.max_retries = api_key, timeout, max_retries
         self.max_daily_wait = max_daily_wait  # wait (instead of failing) when a daily quota frees up within this many seconds
         self._lock = threading.Lock()

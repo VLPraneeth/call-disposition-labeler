@@ -21,7 +21,7 @@ from labeler.pipeline import Labeler, Settings, settings_dict
 INPUT_FIELDS = ("transcript_id", "call_started_at", "timezone", "transcript")
 
 # USD per 1M tokens (input, output) on Groq at time of writing; used only for the cost estimate.
-PRICES = {"openai/gpt-oss-120b": (0.15, 0.60), "accounts/fireworks/models/gpt-oss-120b": (0.15, 0.60), "openai/gpt-oss-20b": (0.075, 0.30), "qwen/qwen3.8-27b": (0.29, 0.59)}
+PRICES = {"openai/gpt-oss-120b": (0.15, 0.60), "openai/gpt-oss-20b": (0.075, 0.30)}
 
 
 def read_inputs(path: str) -> list[dict]:
@@ -49,12 +49,9 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--input", required=True, help="input JSONL path")
     p.add_argument("--output", required=True, help="prediction JSONL path")
-    p.add_argument("--model", default=Settings.model)
-    p.add_argument("--api-url", default=API_URL, help="OpenAI-compatible chat-completions URL (default: Groq)")
-    p.add_argument("--api-key-env", default="GROQ_API_KEY", help="environment variable holding the API key")
+    p.add_argument("--model", default=Settings.model, help="Groq model ID")
     p.add_argument("--reasoning-effort", default=Settings.reasoning_effort, help="gpt-oss: low|medium|high; 'none' to omit")
     p.add_argument("--max-completion-tokens", type=int, default=Settings.max_completion_tokens)
-    p.add_argument("--prompt-version", default=Settings.prompt_version, help="p3 (default) | p7 | p8 | p9 | p10")
     p.add_argument("--temperature", type=float, default=Settings.temperature,
                    help="sampling temperature (0 = greedy; use >0 with --samples for self-consistency voting)")
     p.add_argument("--seed", type=int, default=Settings.seed, help="base seed (sample j uses seed + 100*j)")
@@ -65,7 +62,6 @@ def main(argv=None) -> int:
     p.add_argument("--max-daily-wait", type=float, default=1800.0,
                    help="if a daily Groq quota is hit and frees up within this many seconds, wait instead of falling back")
     p.add_argument("--ids", default=None, help="optional file with one transcript_id per line (or JSON list) to restrict the run")
-    p.add_argument("--cache-dir", default=None, help="optional response cache for development (off by default)")
     p.add_argument("--log", default=None, help="optional JSONL with per-record facts, trace, usage (default: <output>.log.jsonl)")
     a = p.parse_args(argv)
 
@@ -75,9 +71,11 @@ def main(argv=None) -> int:
         wanted = set(json.loads(txt)) if txt.startswith("[") else {l.strip() for l in txt.splitlines() if l.strip()}
         recs = [r for r in recs if r["transcript_id"] in wanted]
 
-    s = Settings(model=a.model, seed=a.seed, temperature=a.temperature, samples=a.samples, prompt_version=a.prompt_version, max_completion_tokens=a.max_completion_tokens, reasoning_effort=None if a.reasoning_effort in (None, "none") else a.reasoning_effort)
-    labeler = Labeler(GroqClient(load_api_key(a.api_key_env), timeout=a.timeout, max_retries=a.retries,
-                                  max_daily_wait=a.max_daily_wait, api_url=a.api_url), s, cache_dir=a.cache_dir)
+    s = Settings(model=a.model, seed=a.seed, temperature=a.temperature, samples=a.samples,
+                 max_completion_tokens=a.max_completion_tokens,
+                 reasoning_effort=None if a.reasoning_effort in (None, "none") else a.reasoning_effort)
+    labeler = Labeler(GroqClient(load_api_key("GROQ_API_KEY"), timeout=a.timeout, max_retries=a.retries,
+                                  max_daily_wait=a.max_daily_wait), s)
 
     t0 = time.time()
     results: dict[str, tuple[dict, dict]] = {}
@@ -109,7 +107,7 @@ def main(argv=None) -> int:
     summary = {"records": len(recs), "fallbacks": sum(m["fallback"] for _, m in results.values()),
                "runtime_seconds": round(elapsed, 1), "prompt_tokens": pin, "completion_tokens": pout,
                "estimated_cost_usd": round(pin / 1e6 * price[0] + pout / 1e6 * price[1], 4) if price else None,
-               "settings": settings_dict(s), "api_url": a.api_url}
+               "settings": settings_dict(s), "api_url": API_URL}
     log = Path(a.log) if a.log else out.with_suffix(".log.jsonl")
     with open(log, "w", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps({"summary": summary}, ensure_ascii=False) + "\n")

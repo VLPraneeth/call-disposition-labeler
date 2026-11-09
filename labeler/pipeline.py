@@ -7,17 +7,15 @@ emitted so every input ID always gets a schema-valid prediction.
 from __future__ import annotations
 
 from collections import Counter
-import hashlib
 import json
 import re
 import time
-from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from dataclasses import asdict, dataclass
 
 from .decide import _days_at_11, decide
 from .groq_client import GroqClient, GroqError
-from .prompts import PROMPT_VERSION, PROMPTS, USER_TEMPLATE
-from .schema import OUTPUT_KEYS, facts_schema, normalise_facts, validate_output
+from .prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE
+from .schema import FACTS_SCHEMA, OUTPUT_KEYS, normalise_facts, validate_output
 from .timeparse import parse_call_time
 
 
@@ -29,31 +27,25 @@ class Settings:
     seed: int = 7
     reasoning_effort: str | None = "low"      # gpt-oss only; low = medium accuracy at ~half the tokens (round 4)
     max_completion_tokens: int = 4000
-    structured_output: str = "json_schema"    # "json_schema" (strict) | "json_object"
     parse_attempts: int = 2                   # LLM re-asks when output is not valid JSON
     samples: int = 5                          # independent samples per call; >1 = per-field majority vote
-    prompt_version: str = PROMPT_VERSION
-    extra: dict = field(default_factory=dict)
+    prompt_version: str = PROMPT_VERSION      # recorded in the run log
 
 
-def build_messages(rec: dict, prompt_version: str = PROMPT_VERSION) -> list[dict]:
+def build_messages(rec: dict) -> list[dict]:
     call = parse_call_time(rec["call_started_at"])
     user = USER_TEMPLATE.format(call_started_at=rec["call_started_at"], weekday=call.strftime("%A"),
                                 timezone=rec.get("timezone") or "Asia/Kolkata", transcript=rec["transcript"])
-    return [{"role": "system", "content": PROMPTS[prompt_version]}, {"role": "user", "content": user}]
+    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
 
 
 def build_body(rec: dict, s: Settings) -> dict:
-    body = {"model": s.model, "messages": build_messages(rec, s.prompt_version), "temperature": s.temperature, "top_p": s.top_p,
-            "seed": s.seed, "max_completion_tokens": s.max_completion_tokens}
+    body = {"model": s.model, "messages": build_messages(rec), "temperature": s.temperature, "top_p": s.top_p,
+            "seed": s.seed, "max_completion_tokens": s.max_completion_tokens,
+            "response_format": {"type": "json_schema",
+                                "json_schema": {"name": "call_facts", "strict": True, "schema": FACTS_SCHEMA}}}
     if s.reasoning_effort and "gpt-oss" in s.model:
         body["reasoning_effort"] = s.reasoning_effort
-    if s.structured_output == "json_schema":
-        body["response_format"] = {"type": "json_schema",
-                                   "json_schema": {"name": "call_facts", "strict": True, "schema": facts_schema(s.prompt_version)}}
-    else:
-        body["response_format"] = {"type": "json_object"}
-    body.update(s.extra)
     return body
 
 
@@ -79,27 +71,8 @@ def fallback_prediction(rec: dict) -> dict:
 
 
 class Labeler:
-    def __init__(self, client: GroqClient, settings: Settings, cache_dir: str | None = None):
+    def __init__(self, client: GroqClient, settings: Settings):
         self.client, self.s = client, settings
-        self.cache = Path(cache_dir) if cache_dir else None
-        if self.cache:
-            self.cache.mkdir(parents=True, exist_ok=True)
-
-    def _cache_key(self, body: dict) -> str:
-        # Keyed on the full request (model + settings + prompt + transcript text): a response cache,
-        # never a label lookup. Disabled unless --cache-dir is given.
-        return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
-
-    def _call(self, body: dict) -> tuple[dict, dict]:
-        if self.cache:
-            f = self.cache / f"{self._cache_key(body)}.json"
-            if f.exists():
-                d = json.loads(f.read_text(encoding="utf-8"))
-                return d["response"], {"attempts": 0, "cached": True}
-        resp, info = self.client.chat(body)
-        if self.cache:
-            f.write_text(json.dumps({"response": resp}, ensure_ascii=False), encoding="utf-8")
-        return resp, info
 
     def label(self, rec: dict) -> tuple[dict, dict]:
         """Return (prediction, meta). With samples > 1, run independent samples (different seeds) and take a
@@ -132,15 +105,14 @@ class Labeler:
             try:
                 if i > 0:  # vary the seed on a re-ask so a deterministic bad output is not repeated
                     body = {**body, "seed": seed + i}
-                resp, info = self._call(body)
+                resp, info = self.client.chat(body)
                 meta["attempts"] += info.get("attempts", 0)
-                meta["cached"] = info.get("cached", False)
                 u = resp.get("usage") or {}
                 meta["usage"]["prompt_tokens"] += u.get("prompt_tokens", 0)
                 meta["usage"]["completion_tokens"] += u.get("completion_tokens", 0)
                 content = resp["choices"][0]["message"].get("content") or ""
                 facts = normalise_facts(parse_json(content))
-                out = decide(facts, rec["call_started_at"], transcript=rec["transcript"])
+                out = decide(facts, rec["call_started_at"])
                 pred = {"transcript_id": rec["transcript_id"], **{k: out[k] for k in OUTPUT_KEYS[1:]}}
                 errs = validate_output(pred)
                 if errs:

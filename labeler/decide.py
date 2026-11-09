@@ -7,12 +7,8 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, time, timedelta
-from difflib import SequenceMatcher
 
 from .timeparse import IST, day_offset, format_ts, parse_call_time, repair_slot, resolve_slot
-
-RULES = {"f12_event": True, "need_no_invalid": True, "llm_followup": True, "llm_next_step": True,
-         "final_blocker": True}
 
 # SUB tie-break orders
 INVALID_ORDER = ["test_enquiry", "wrong_contact", "no_pain_need", "policy_exclusion", "outside_service_area"]
@@ -30,41 +26,8 @@ def _days_at_11(call_started_at: str, days: int) -> str:
     return format_ts(datetime.combine(call.date() + timedelta(days=days), time(11, 0), IST))
 
 
-def _norm(s: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", (s or "").lower())).strip()
-
-
-def _quote_position(quote: str, text_norm: str) -> int | None:
-    """Where a (near-)verbatim quote sits in the normalised transcript; None if it cannot be found."""
-    q = _norm(quote)
-    if len(q) < 8:
-        return None
-    i = text_norm.rfind(q)
-    if i >= 0:
-        return i
-    m = SequenceMatcher(None, text_norm, q, autojunk=False).find_longest_match(0, len(text_norm), 0, len(q))
-    return m.a if m.size >= max(12, len(q) // 2) else None
-
-
-def last_stated_positions(last_quotes, transcript: str, open_: list[str]) -> dict:
-    """{blocker: position of the customer's last statement of it} for blockers in `open_` that can be located."""
-    text = _norm(transcript)
-    pos = {}
-    for x in last_quotes or []:
-        if x.get("type") in open_:
-            p = _quote_position(x.get("quote", ""), text)
-            if p is not None:
-                pos[x["type"]] = max(p, pos.get(x["type"], -1))
-    return pos
-
-
-def decide(facts: dict, call_started_at: str, rules: dict | None = None, transcript: str | None = None) -> dict:
-    """Return {'disposition','sub_disposition','lead_quality','next_call_at','trace'}.
-
-    `rules` toggles individual rules (default RULES: all on) so each can be measured on its own.
-    `transcript` is only used to locate the model's verbatim quotes (rule final_blocker).
-    """
-    rules = {**RULES, **(rules or {})}
+def decide(facts: dict, call_started_at: str) -> dict:
+    """Return {'disposition','sub_disposition','lead_quality','next_call_at','trace'}."""
     trace = []
     need = facts["patient_need"]["relevant_pain_need"]
     meaningful = facts["assessable"]["meaningful_conversation"]
@@ -72,16 +35,13 @@ def decide(facts: dict, call_started_at: str, rules: dict | None = None, transcr
     # Invalid reasons, with a consistency guard: "no_pain_need" cannot coexist with an established need.
     invalid = [r for r in facts["invalid"]["reasons"] if not (r == "no_pain_need" and need == "yes")]
     # ...and the mirror (D1): reliable evidence of no pain-care need IS the No Pain Need reason.
-    if need == "no" and "no_pain_need" not in invalid and rules["need_no_invalid"]:
+    if need == "no" and "no_pain_need" not in invalid:
         invalid.append("no_pain_need")
     refusal = facts["refusal"]["final"]
     appt = facts["appointment"]
     blockers = facts["blockers"]
     cb = facts["callback"]
     vague = bool(facts["vague_postponement"]["present"])
-    kind = (facts.get("next_step") or {}).get("kind") if rules["llm_next_step"] else None
-    if kind in ("vague_postponement", "none"):
-        vague = kind == "vague_postponement"                                     # p8: policy-verbatim F7/F8 choice
 
     # Specific callback (F3, F4-F6, F10-F12): must be agreed AND resolve to a future timestamp.
     cb["slot"] = repair_slot(cb["slot"])
@@ -90,7 +50,7 @@ def decide(facts: dict, call_started_at: str, rules: dict | None = None, transcr
 
     # F12: "next week" qualified by an unresolved event ("next week after Dussehra") is vague -> F7.
     words = (cb["slot"].get("words") or "").lower()
-    if rules["f12_event"] and cb["proposal"] and cb["acknowledgement"] and \
+    if cb["proposal"] and cb["acknowledgement"] and \
             re.search(r"\bnext week\b.*\bafter\b|\bafter\b.*\bnext week\b", words):
         agreed = False
         if not vague:
@@ -115,22 +75,10 @@ def decide(facts: dict, call_started_at: str, rules: dict | None = None, transcr
         disp = "Follow-up Required"                                              # D4 / D5 (known need is never Unable)
         main = blockers["main"] if blockers["main"] != "none" else None
         open_ = [b for b in blockers["open"] if b in BLOCKER_ORDER]
-        # D4: "the final stated main unresolved blocker, not every historical objection".
-        # With 2+ open blockers whose last statements are located, the one stated last is the main one.
-        pos = last_stated_positions(blockers.get("last_quotes"), transcript, open_) \
-            if rules["final_blocker"] and transcript else {}
-        if len(pos) >= 2:
-            latest = max(pos, key=pos.get)
-            if latest != main:
-                trace.append(f"final stated blocker {latest} replaces {main} (D4)")
-            main = latest
         if main is None and open_:
             main = min(open_, key=BLOCKER_ORDER.index)                           # SUB tie-break among equals
             trace.append(f"no main blocker named; tie-break over {open_}")
-        llm_sub = (facts.get("followup") or {}).get("label") if rules["llm_followup"] else None
-        if llm_sub and (llm_sub != "Specific Callback" or callback_ts):
-            sub = llm_sub                                                        # p7: policy-verbatim choice
-        elif main:
+        if main:
             sub = BLOCKER_LABEL[main]
         elif callback_ts:
             sub = "Specific Callback"

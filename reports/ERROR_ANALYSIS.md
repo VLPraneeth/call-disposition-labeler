@@ -42,12 +42,14 @@ Five calls with two competing blockers (014, 020, 025, 038, 043) do not follow o
 
 ## 3. Iteration log
 
+Only the final version is kept in the code. The rejected prompt variants (p2, p4–p10), their extra schema fields and rule switches, the offline re-scoring script and the experiment run logs were removed before submission; they remain in the git history.
+
 | Version | Change | Dev result |
 |---|---|---|
 | p1 + rules v1 | LLM extracts facts with evidence quotes; Python applies D1–D6, the SUB pairs, the LQ order and F1–F12 | 62.8 (sub 70%, the main error source) |
 | p2 | Clarified the blocker definitions from the rulebook: Travel covers work, leave, schedules and accompaniment; Family means a decision that waits on family | Partial run only: Groq's free daily quota caused 12 fallbacks |
 | p3 | Scan the whole call for blockers; an agreed callback does not remove a blocker; information must be customer-requested; conditional "if I want" counts as exploratory, not refusal; always fill structured time fields | On the 18 calls comparable with v1: v1 64.7, v2 61.4, v2 + repair 62.5 |
-| `repair_slot` | Deterministic fill of missing time fields from the model's verbatim `words` (e.g. "26th" with an empty day) | Fixed AVT-017; offline, no API cost (`scripts/rescore.py`) |
+| `repair_slot` | Deterministic fill of missing time fields from the model's verbatim `words` (e.g. "26th" with an empty day) | Fixed AVT-017; offline, no API cost (re-scoring logged facts) |
 | p3, round-1 submission | Full run on all 50 | Dev 63.5 / 62.3 (repeat), holdout 57.8, all 50: 61.2 |
 
 ### Second round: prompt rewording, all rejected
@@ -70,7 +72,7 @@ p5 gained on dev but lost 3.8 on the holdout: it turned a clear Explicit Refusal
 
 ### Third round: rule fixes in code, policy-verbatim prompts, sampling
 
-The question this round asked was which errors can be fixed **in code, from the rules**, and which are the model's reading of the call. Code-only changes were measured by re-applying `decide.py` to the logged facts (`scripts/rescore.py`), with no new API calls. All numbers are on all 50 calls; prompt variants were run twice.
+The question this round asked was which errors can be fixed **in code, from the rules**, and which are the model's reading of the call. Code-only changes were measured by re-applying `decide.py` to the logged facts, with no new API calls. All numbers are on all 50 calls; prompt variants were run twice.
 
 | # | Variant | Kind | All 50 | Dev | Holdout | Kept? |
 |---|---|---|---|---|---|---|
@@ -144,7 +146,7 @@ On 13 of the 15 wrong calls, none of the 5 samples is fully correct, and 10 of t
 ## 5. Provider note (read this)
 
 - **The submitted system targets Groq** (`openai/gpt-oss-120b`, `GROQ_API_KEY`), as required. Groq's other open text models today are `gpt-oss-20b` and `qwen/qwen3.8-27b`, both smaller, so the 120b model was kept.
-- **Why the experiment and final runs used Fireworks:** Groq's free tier allows 200k tokens per day per model, about 33 greedy calls (about 7 calls with 5 samples). The final predictions were therefore produced with the **same open-weight model (`accounts/fireworks/models/gpt-oss-120b`), the same prompt, settings and code**, through Fireworks' OpenAI-compatible endpoint (`--api-url` / `--api-key-env` flags).
+- **Why the experiment and final runs used Fireworks:** Groq's free tier allows 200k tokens per day per model, about 33 greedy calls (about 7 calls with 5 samples). The final predictions were therefore produced with the **same open-weight model (`accounts/fireworks/models/gpt-oss-120b`), the same prompt, settings and code**, through Fireworks' OpenAI-compatible endpoint (an endpoint override used only for these runs; the submitted CLI is Groq-only). The endpoint and model ID are recorded in `outputs/predictions.log.jsonl`.
 - **Equivalence check:** on the 17 calls finished on Groq in round 1, Groq and Fireworks gave identical outputs on 15/17, with the same accuracy. That is the same agreement level as two runs on one provider.
 - **Earlier dev iterations** (v1, v2) ran on Groq.
-- **Reliability on Groq:** the client honours Groq's `retry-after` headers and daily-quota messages (it waits up to `--max-daily-wait` before falling back). The final setup needs about 1.46M tokens for 50 calls, so it needs a paid Groq tier. On that tier, `python run.py --input … --output …` runs unchanged.
+- **Reliability on Groq:** the client honours Groq's `retry-after` headers and daily-quota messages (it waits up to `--max-daily-wait` before falling back). The final setup needs about 1.46M tokens for 50 calls, so it needs a paid Groq tier (the free tier also caps throughput at 8k tokens per minute). On that tier, `python run.py --input … --output …` runs unchanged.
