@@ -140,7 +140,7 @@ class Labeler:
                 meta["usage"]["completion_tokens"] += u.get("completion_tokens", 0)
                 content = resp["choices"][0]["message"].get("content") or ""
                 facts = normalise_facts(parse_json(content))
-                out = decide(facts, rec["call_started_at"])
+                out = decide(facts, rec["call_started_at"], transcript=rec["transcript"])
                 pred = {"transcript_id": rec["transcript_id"], **{k: out[k] for k in OUTPUT_KEYS[1:]}}
                 errs = validate_output(pred)
                 if errs:

@@ -109,8 +109,19 @@ NEXT_KINDS = ["specific_callback", "vague_postponement", "none"]
 NEXT_STEP = _obj({"evidence": {"type": "string"}, "kind": {"type": "string", "enum": NEXT_KINDS}})
 
 
+BLOCKER_LAST = {"type": "array", "items": _obj({"type": {"type": "string", "enum": BLOCKERS},
+                                                "quote": {"type": "string"}})}
+
+
 def facts_schema(prompt_version: str) -> dict:
-    """p3: FACTS_SCHEMA. p7: + final `followup` (policy-verbatim sub-disposition). p8: p7 + `next_step`."""
+    """p3: FACTS_SCHEMA. p7: + final `followup` (policy-verbatim sub-disposition). p8: p7 + `next_step`.
+    p10: blockers gets `last_quotes` (customer's last words per open blocker), placed before `main`."""
+    if prompt_version == "p10":
+        s = copy.deepcopy(FACTS_SCHEMA)
+        b = s["properties"]["blockers"]["properties"]
+        s["properties"]["blockers"] = _obj({"evidence": b["evidence"], "open": b["open"],
+                                            "last_quotes": BLOCKER_LAST, "main": b["main"]})
+        return s
     if prompt_version in ("p7", "p8"):
         s = copy.deepcopy(FACTS_SCHEMA)
         s["properties"]["followup"] = FOLLOWUP
@@ -181,6 +192,10 @@ def normalise_facts(raw: dict) -> dict:
                  "interest": _enum(g("lead", "interest"), INTEREST, "unclear"),
                  "defers_over_30_days": _b(g("lead", "defers_over_30_days"))},
     }
+    lq = g("blockers", "last_quotes")
+    if isinstance(lq, list):
+        out["blockers"]["last_quotes"] = [{"type": x.get("type"), "quote": str(x.get("quote") or "")}
+                                          for x in lq if isinstance(x, dict) and x.get("type") in BLOCKERS]
     if isinstance(raw.get("followup"), dict):
         lab = g("followup", "label")
         out["followup"] = {"evidence": str(g("followup", "evidence") or ""),

@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, time, timedelta
+from difflib import SequenceMatcher
 
 from .timeparse import IST, day_offset, format_ts, parse_call_time, repair_slot, resolve_slot
 
-RULES = {"f12_event": True, "need_no_invalid": True, "llm_followup": True, "llm_next_step": True}
+RULES = {"f12_event": True, "need_no_invalid": True, "llm_followup": True, "llm_next_step": True,
+         "final_blocker": True}
 
 # SUB tie-break orders
 INVALID_ORDER = ["test_enquiry", "wrong_contact", "no_pain_need", "policy_exclusion", "outside_service_area"]
@@ -28,10 +30,39 @@ def _days_at_11(call_started_at: str, days: int) -> str:
     return format_ts(datetime.combine(call.date() + timedelta(days=days), time(11, 0), IST))
 
 
-def decide(facts: dict, call_started_at: str, rules: dict | None = None) -> dict:
+def _norm(s: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", (s or "").lower())).strip()
+
+
+def _quote_position(quote: str, text_norm: str) -> int | None:
+    """Where a (near-)verbatim quote sits in the normalised transcript; None if it cannot be found."""
+    q = _norm(quote)
+    if len(q) < 8:
+        return None
+    i = text_norm.rfind(q)
+    if i >= 0:
+        return i
+    m = SequenceMatcher(None, text_norm, q, autojunk=False).find_longest_match(0, len(text_norm), 0, len(q))
+    return m.a if m.size >= max(12, len(q) // 2) else None
+
+
+def last_stated_positions(last_quotes, transcript: str, open_: list[str]) -> dict:
+    """{blocker: position of the customer's last statement of it} for blockers in `open_` that can be located."""
+    text = _norm(transcript)
+    pos = {}
+    for x in last_quotes or []:
+        if x.get("type") in open_:
+            p = _quote_position(x.get("quote", ""), text)
+            if p is not None:
+                pos[x["type"]] = max(p, pos.get(x["type"], -1))
+    return pos
+
+
+def decide(facts: dict, call_started_at: str, rules: dict | None = None, transcript: str | None = None) -> dict:
     """Return {'disposition','sub_disposition','lead_quality','next_call_at','trace'}.
 
     `rules` toggles individual rules (default RULES: all on) so each can be measured on its own.
+    `transcript` is only used to locate the model's verbatim quotes (rule final_blocker).
     """
     rules = {**RULES, **(rules or {})}
     trace = []
@@ -84,6 +115,15 @@ def decide(facts: dict, call_started_at: str, rules: dict | None = None) -> dict
         disp = "Follow-up Required"                                              # D4 / D5 (known need is never Unable)
         main = blockers["main"] if blockers["main"] != "none" else None
         open_ = [b for b in blockers["open"] if b in BLOCKER_ORDER]
+        # D4: "the final stated main unresolved blocker, not every historical objection".
+        # With 2+ open blockers whose last statements are located, the one stated last is the main one.
+        pos = last_stated_positions(blockers.get("last_quotes"), transcript, open_) \
+            if rules["final_blocker"] and transcript else {}
+        if len(pos) >= 2:
+            latest = max(pos, key=pos.get)
+            if latest != main:
+                trace.append(f"final stated blocker {latest} replaces {main} (D4)")
+            main = latest
         if main is None and open_:
             main = min(open_, key=BLOCKER_ORDER.index)                           # SUB tie-break among equals
             trace.append(f"no main blocker named; tie-break over {open_}")

@@ -31,7 +31,7 @@ def main(log, inputs, out):
             r = recs[m["transcript_id"]]
             preds = []
             for fx in [x for x in (m.get("sample_facts") or [m["facts"]])[:SAMPLES] if x]:
-                o = decide(fx, r["call_started_at"], RULES)
+                o = decide(fx, r["call_started_at"], RULES, r["transcript"])
                 preds.append({"transcript_id": m["transcript_id"], **{k: o[k] for k in OUTPUT_KEYS[1:]}})
             f.write(json.dumps(vote(m["transcript_id"], preds)) + "\n")
             n += 1

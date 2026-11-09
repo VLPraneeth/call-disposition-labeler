@@ -37,6 +37,21 @@ class TestDecide(unittest.TestCase):
         pred = {"transcript_id": "X", **{k: out[k] for k in ("disposition", "sub_disposition", "lead_quality", "next_call_at")}}
         self.assertEqual(validate_output(pred), [])
 
+    def test_d4_final_stated_blocker_wins(self):
+        # Travel stated first, a treatment doubt stated last -> Treatment Concern (D4: final stated blocker).
+        t = ("Customer: It is too far for me, I cannot travel today.\nAgent: We have a closer branch.\n"
+             "Customer: But will the injection really fix the root cause? I want only the senior doctor.")
+        f = facts(blockers__open=["travel_constraint", "treatment_concern"], blockers__main="travel_constraint",
+                  blockers__last_quotes=[{"type": "travel_constraint", "quote": "It is too far for me, I cannot travel today"},
+                                         {"type": "treatment_concern", "quote": "will the injection really fix the root cause"}])
+        self.assertEqual(decide(f, CALL, transcript=t)["sub_disposition"], "Treatment Concern")
+        # Without the transcript (or with the rule off) the model's own main blocker is kept.
+        self.assertEqual(decide(f, CALL)["sub_disposition"], "Travel Constraint")
+        self.assertEqual(decide(f, CALL, {"final_blocker": False}, t)["sub_disposition"], "Travel Constraint")
+        # A quote that is not in the transcript is ignored (only one blocker located -> model's main kept).
+        f["blockers"]["last_quotes"][1]["quote"] = "completely invented sentence that nobody said"
+        self.assertEqual(decide(f, CALL, transcript=t)["sub_disposition"], "Travel Constraint")
+
     def test_need_no_implies_no_pain_need_invalid(self):
         f = facts(patient_need__relevant_pain_need="no")
         self.check(f, "Invalid Lead", "No Pain Need", "Not Qualified", None)

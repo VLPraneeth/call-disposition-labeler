@@ -112,6 +112,21 @@ All runs use 5 samples per call with the majority vote. Scores are on all 50, wi
 - **Consistency rule (code):** with low effort, one synthetic call (SYN-02, "only hair fall, no pain at all") had `relevant_pain_need = "no"` but no invalid reason in 4 of the 5 samples. D1 says reliable evidence of no pain-care need *is* Invalid Lead / No Pain Need, so `decide.py` now adds that reason whenever need = "no". This mirrors the existing guard that drops it when need = "yes". It changes nothing on the 50 and fixes the synthetic set (66.1 → 70.0).
 - **Ceiling:** more samples converge to 62.6 / 70% exact. The remaining 15 calls are systematic disagreements with the gold (section 2). Reaching 75% exact (38/50) would mean fitting these specific calls, which round 2 showed does not carry over to unseen calls.
 
+### Fifth round: "final stated blocker" (D4), rejected
+
+On 13 of the 15 wrong calls, none of the 5 samples is fully correct, and 10 of them are wrong only in `sub_disposition`. Reading 014 and 047, the gold appears to take the blocker the customer raised last (a doubt about the doctor or whether the case can be treated), while the model keeps a travel reason raised earlier. Policy D4 says: "Select the final stated main unresolved blocker, not every historical objection."
+
+- **p10 (prompt):** `blockers.main` uses the D4 wording, and a new field `blockers.last_quotes` holds the customer's last verbatim words for each open blocker.
+- **`final_blocker` (code):** when two or more open blockers can be located in the transcript, the one stated last becomes the main blocker. Unit-tested; it is active only when `last_quotes` is present.
+
+| Variant | All 50 | Dev | Holdout | Kept? |
+|---|---|---|---|---|
+| p10 + `final_blocker` | 61.0 (66%) | 63.8 | 56.8 | no |
+| p10, rule off | 61.0 (66%) | 63.8 | 56.8 | no |
+
+- The code rule works as built (22 of 23 two-blocker samples located both quotes), but only 23 of 250 samples listed two blockers at all, and it changed the main blocker in 5 samples, never enough to flip a vote. On most of the wrong calls the model hears **one** reason, not two in the wrong order (047: travel only, 5/5 samples), so ordering cannot help.
+- The prompt wording fixed 026 but broke 007, 025 and 033, and the holdout fell. p4 (round 2) already used the same D4 wording without beating p3, and none of p4–p10 beat p3 on unseen calls, so the p3 wording stays.
+
 ## 4. Runtime, tokens and cost
 
 | Run | Calls | Wall time | Prompt tokens | Completion tokens | Est. cost |
@@ -124,7 +139,7 @@ All runs use 5 samples per call with the majority vote. Scores are on all 50, wi
 - **Per call (final setup):** about 25.6k prompt and 3.7k completion tokens across 5 samples, about $0.006, about 33 s sequentially (samples run one after another per call; calls run in parallel with `--workers`).
 - **Cheap mode:** `--samples 1 --temperature 0` costs about 4× less and scores about 1–2 points lower.
 - **Prices:** $0.15 / $0.60 per 1M input/output tokens. This is the published price for `gpt-oss-120b` on both Groq and Fireworks.
-- **Total API spend for the project:** about $6.30 across all logged runs, including every rejected experiment.
+- **Total API spend for the project:** about $6.60 across all logged runs, including every rejected experiment.
 
 ## 5. Provider note (read this)
 

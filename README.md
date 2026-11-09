@@ -26,7 +26,7 @@ python run.py --input path/to/inputs.jsonl --output path/to/predictions.jsonl
 - **Input:** JSONL with `transcript_id`, `call_started_at`, `timezone`, `transcript`. Any other field, including gold labels, is dropped before processing.
 - **Output:** JSONL, one object per input in input order, with exactly the five contract keys. `next_call_at` is `"YYYY-MM-DDTHH:MM:SS+05:30"` or JSON `null`.
 - **Run log:** `<output>.log.jsonl` with per-record extracted facts and evidence, decision trace, token usage and timings, plus a summary line with runtime, tokens and estimated cost.
-- **Optional flags:** `--workers N` (parallel requests on paid tiers), `--timeout`, `--retries`, `--max-daily-wait`, `--model`, `--reasoning-effort`, `--ids` (restrict to a list), `--cache-dir` (development response cache; off by default), `--api-url` / `--api-key-env` (any OpenAI-compatible endpoint; Groq is the default), `--samples N` / `--temperature T` / `--seed S` (default 5 / 0.6 / 7; `--samples 1 --temperature 0` is a 5× cheaper greedy mode, about 2 points lower), `--prompt-version` (p3 default; p7/p8/p9 are the rejected experiments), `--max-completion-tokens`.
+- **Optional flags:** `--workers N` (parallel requests on paid tiers), `--timeout`, `--retries`, `--max-daily-wait`, `--model`, `--reasoning-effort`, `--ids` (restrict to a list), `--cache-dir` (development response cache; off by default), `--api-url` / `--api-key-env` (any OpenAI-compatible endpoint; Groq is the default), `--samples N` / `--temperature T` / `--seed S` (default 5 / 0.6 / 7; `--samples 1 --temperature 0` is a 5× cheaper greedy mode, about 2 points lower), `--prompt-version` (p3 default; p7/p8/p9/p10 are the rejected experiments), `--max-completion-tokens`.
 
 Every input ID always receives a valid prediction. If the model is unreachable or returns unusable output after all retries, a documented majority-class fallback is written and flagged in the log.
 
@@ -82,7 +82,7 @@ scripts/split.py           fixed stratified dev (30) / holdout (20) split, seed 
 scripts/evaluate.py        scorer mirroring the published scoring contract
 scripts/rescore.py         re-apply current rules to logged facts (no API calls)
 scripts/make_synthetic.py  18 hand-labelled stress calls for labels absent from the 50
-tests/                     59 unit tests (rulebook boundary examples EX1-EX6 and F-rules)
+tests/                     60 unit tests (rulebook boundary examples EX1-EX6 and F-rules)
 reports/ERROR_ANALYSIS.md  results, failure patterns, iteration log, runtime/tokens/cost
 outputs/predictions.jsonl  final predictions for the 50 supplied calls
 ```
@@ -93,7 +93,7 @@ outputs/predictions.jsonl  final predictions for the 50 supplied calls
 pip install openpyxl==3.1.5                               # only for the conversion step
 python scripts/convert_xlsx.py "<workbook>.xlsx" data      # inputs.jsonl + gold.jsonl
 python scripts/split.py                                    # data/split.json (seeded)
-python -m unittest discover -s tests -t .                  # 59 tests, offline
+python -m unittest discover -s tests -t .                  # 60 tests, offline
 python run.py --input data/inputs.jsonl --output outputs/predictions.jsonl
 python scripts/evaluate.py outputs/predictions.jsonl data/gold.jsonl --ids data/split.json:holdout
 python run.py --input data/synthetic/inputs.jsonl --output outputs/synthetic_predictions.jsonl

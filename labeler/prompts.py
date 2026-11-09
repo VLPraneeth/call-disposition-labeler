@@ -134,8 +134,17 @@ FULL_POLICY_ADDON = """
 OFFICIAL LABEL POLICY (verbatim, rule | field | option | definition). The final labels are computed from your facts by code that implements exactly these rules, so judge every fact the way this policy would:
 """ + POLICY_TEXT
 
+# p10: p3 with the policy's D4 wording for the main blocker ("final stated main unresolved blocker,
+# not every historical objection"), plus the customer's LAST quote per open blocker, so the code can
+# check which reason was stated last (decide.py rule "final_blocker").
+_P3_MAIN = """blockers.main: from blockers.open, the reason that most directly explains why the consultation is not booked now / what the final next step waits on, as the customer emphasises it ("none" if open is empty). If several are truly equally primary, pick the one listed first above."""
+_P10_MAIN = """blockers.last_quotes: for EACH reason in blockers.open, {type, quote}: the customer's LAST words in the call that state or reaffirm that reason, copied verbatim from the transcript (max ~20 words).
+blockers.main: the FINAL stated main unresolved blocker, not every historical objection: from blockers.open, the reason the customer raised or reaffirmed LAST that the final next step still waits on ("none" if open is empty). An earlier objection does not outrank a reason the customer raised after it. If several are truly equally primary, pick the one listed first above."""
+assert _P3_MAIN in SYSTEM_PROMPT
+P10_PROMPT = SYSTEM_PROMPT.replace(_P3_MAIN, _P10_MAIN)
+
 PROMPTS = {"p3": SYSTEM_PROMPT, "p9": SYSTEM_PROMPT + FULL_POLICY_ADDON, "p7": SYSTEM_PROMPT + FOLLOWUP_ADDON,
-           "p8": SYSTEM_PROMPT + FOLLOWUP_ADDON + NEXT_STEP_ADDON}
+           "p8": SYSTEM_PROMPT + FOLLOWUP_ADDON + NEXT_STEP_ADDON, "p10": P10_PROMPT}
 
 USER_TEMPLATE = """Call started at: {call_started_at} ({weekday}), timezone {timezone}.
 
