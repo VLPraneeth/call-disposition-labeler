@@ -19,10 +19,11 @@ transcript ─► LLM ×5 samples (strict JSON schema) ─► facts + verbatim e
 Requires **Python ≥ 3.10**. There are **no third-party runtime dependencies**: the runner uses only the standard library, including the HTTP client. `openpyxl` is needed only for the one-off workbook conversion script.
 
 ```bash
-export GROQ_API_KEY=gsk_...          # PowerShell: $env:GROQ_API_KEY="gsk_..."   (a .env file also works)
+cp .env.example .env                 # then put your key in .env:  GROQ_API_KEY=gsk_...
 python run.py --input path/to/inputs.jsonl --output path/to/predictions.jsonl
 ```
 
+- **API key:** read from the `GROQ_API_KEY` environment variable if set, otherwise from `.env` in the project root (next to `run.py`), which works from any working directory. `.env` is git-ignored.
 - **Input:** JSONL with `transcript_id`, `call_started_at`, `timezone`, `transcript`. Any other field, including gold labels, is dropped before processing.
 - **Output:** JSONL, one object per input in input order, with exactly the five contract keys. `next_call_at` is `"YYYY-MM-DDTHH:MM:SS+05:30"` or JSON `null`.
 - **Run log:** `<output>.log.jsonl` with per-record extracted facts and evidence, decision trace, token usage and timings, plus a summary line with runtime, tokens and estimated cost.

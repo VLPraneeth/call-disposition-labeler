@@ -24,20 +24,26 @@ class GroqError(RuntimeError):
     pass
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
 def load_api_key(name: str = "GROQ_API_KEY") -> str:
-    """Read the API key (default GROQ_API_KEY) from the environment; fall back to a .env file in cwd or its parents."""
+    """Read the API key (default GROQ_API_KEY) from the environment; fall back to a .env file in the
+    project root (next to run.py), then in the current directory. The key is never logged."""
     key = os.environ.get(name, "").strip()
     if key:
         return key
-    for d in [Path.cwd(), *Path.cwd().parents]:
-        f = d / ".env"
+    for f in dict.fromkeys([PROJECT_ROOT / ".env", Path.cwd() / ".env"]):
         if f.is_file():
-            for line in f.read_text(encoding="utf-8").splitlines():
-                if "=" in line and not line.lstrip().startswith("#"):
+            for line in f.read_text(encoding="utf-8-sig").splitlines():
+                line = line.strip()
+                if line.startswith("export "):
+                    line = line[len("export "):]
+                if "=" in line and not line.startswith("#"):
                     k, v = line.split("=", 1)
-                    if k.strip() == name:
+                    if k.strip() == name and v.strip():
                         return v.strip().strip('"').strip("'")
-    raise GroqError(f"{name} is not set (environment variable or .env file).")
+    raise GroqError(f"{name} is not set: export it, or put {name}=... in {PROJECT_ROOT / '.env'}")
 
 
 def _parse_duration(s: str | None) -> float | None:

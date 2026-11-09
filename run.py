@@ -2,7 +2,7 @@
 
     python run.py --input data/inputs.jsonl --output outputs/predictions.jsonl
 
-Reads GROQ_API_KEY from the environment (or a .env file). Each input line must contain
+Reads GROQ_API_KEY from the environment, or from .env in the project root. Each input line must contain
 transcript_id, call_started_at, timezone, transcript; any other fields are ignored.
 Each output line has exactly: transcript_id, disposition, sub_disposition, lead_quality, next_call_at.
 """
