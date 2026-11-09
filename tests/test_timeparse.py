@@ -133,7 +133,6 @@ if __name__ == "__main__":
 
 class TestRepairSlot(unittest.TestCase):
     """repair_slot fills fields the model left empty, from its verbatim quote."""
-    from labeler.timeparse import repair_slot as _r
 
     def r(self, **kw):
         from labeler.timeparse import repair_slot

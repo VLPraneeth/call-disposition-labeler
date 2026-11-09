@@ -15,13 +15,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from labeler.groq_client import GroqClient, load_api_key
+from labeler.groq_client import API_URL, GroqClient, load_api_key
 from labeler.pipeline import Labeler, Settings, settings_dict
 
 INPUT_FIELDS = ("transcript_id", "call_started_at", "timezone", "transcript")
 
 # USD per 1M tokens (input, output) on Groq at time of writing; used only for the cost estimate.
-PRICES = {"openai/gpt-oss-120b": (0.15, 0.60), "openai/gpt-oss-20b": (0.075, 0.30), "qwen/qwen3.8-27b": (0.29, 0.59)}
+PRICES = {"openai/gpt-oss-120b": (0.15, 0.60), "accounts/fireworks/models/gpt-oss-120b": (0.15, 0.60), "openai/gpt-oss-20b": (0.075, 0.30), "qwen/qwen3.8-27b": (0.29, 0.59)}
 
 
 def read_inputs(path: str) -> list[dict]:
@@ -50,6 +50,8 @@ def main(argv=None) -> int:
     p.add_argument("--input", required=True, help="input JSONL path")
     p.add_argument("--output", required=True, help="prediction JSONL path")
     p.add_argument("--model", default=Settings.model)
+    p.add_argument("--api-url", default=API_URL, help="OpenAI-compatible chat-completions URL (default: Groq)")
+    p.add_argument("--api-key-env", default="GROQ_API_KEY", help="environment variable holding the API key")
     p.add_argument("--reasoning-effort", default=Settings.reasoning_effort, help="gpt-oss: low|medium|high; 'none' to omit")
     p.add_argument("--workers", type=int, default=1, help="parallel requests (raise on paid Groq tiers)")
     p.add_argument("--timeout", type=float, default=120.0, help="per-request timeout, seconds")
@@ -68,7 +70,8 @@ def main(argv=None) -> int:
         recs = [r for r in recs if r["transcript_id"] in wanted]
 
     s = Settings(model=a.model, reasoning_effort=None if a.reasoning_effort in (None, "none") else a.reasoning_effort)
-    labeler = Labeler(GroqClient(load_api_key(), timeout=a.timeout, max_retries=a.retries, max_daily_wait=a.max_daily_wait), s, cache_dir=a.cache_dir)
+    labeler = Labeler(GroqClient(load_api_key(a.api_key_env), timeout=a.timeout, max_retries=a.retries,
+                                  max_daily_wait=a.max_daily_wait, api_url=a.api_url), s, cache_dir=a.cache_dir)
 
     t0 = time.time()
     results: dict[str, tuple[dict, dict]] = {}
@@ -100,7 +103,7 @@ def main(argv=None) -> int:
     summary = {"records": len(recs), "fallbacks": sum(m["fallback"] for _, m in results.values()),
                "runtime_seconds": round(elapsed, 1), "prompt_tokens": pin, "completion_tokens": pout,
                "estimated_cost_usd": round(pin / 1e6 * price[0] + pout / 1e6 * price[1], 4) if price else None,
-               "settings": settings_dict(s)}
+               "settings": settings_dict(s), "api_url": a.api_url}
     log = Path(a.log) if a.log else out.with_suffix(".log.jsonl")
     with open(log, "w", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps({"summary": summary}, ensure_ascii=False) + "\n")

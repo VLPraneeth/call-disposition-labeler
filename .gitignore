@@ -12,3 +12,4 @@ venv/
 outputs/runs/*/raw/
 *.log
 outputs/smoke*
+.cache_fw/

@@ -44,7 +44,7 @@ def build_messages(rec: dict) -> list[dict]:
 def build_body(rec: dict, s: Settings) -> dict:
     body = {"model": s.model, "messages": build_messages(rec), "temperature": s.temperature, "top_p": s.top_p,
             "seed": s.seed, "max_completion_tokens": s.max_completion_tokens}
-    if s.reasoning_effort and s.model.startswith("openai/gpt-oss"):
+    if s.reasoning_effort and "gpt-oss" in s.model:
         body["reasoning_effort"] = s.reasoning_effort
     if s.structured_output == "json_schema":
         body["response_format"] = {"type": "json_schema",
