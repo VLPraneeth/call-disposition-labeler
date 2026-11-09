@@ -1,8 +1,6 @@
-"""Prompt templates (complete, versioned). The LLM extracts evidence-backed facts only;
+"""Complete system and user prompt templates. The LLM extracts evidence-backed facts only;
 labels are derived in labeler/decide.py.
 """
-
-PROMPT_VERSION = "p3"   # the final prompt; rejected variants are described in reports/ERROR_ANALYSIS.md
 
 SYSTEM_PROMPT = """You analyse one phone call between the enrollment team of Aster Vale Pain Clinic (an Indian pain clinic) and a prospect. The team books consultations with pain specialists for the caller or a family member (the "intended patient"). Transcripts are translated from Hindi/English; speaker labels may be wrong, so infer who is the agent (clinic) and who is the customer from what they say. Agent claims are not facts.
 

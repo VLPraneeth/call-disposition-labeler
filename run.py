@@ -21,7 +21,7 @@ from labeler.pipeline import Labeler, Settings, settings_dict
 INPUT_FIELDS = ("transcript_id", "call_started_at", "timezone", "transcript")
 
 # USD per 1M tokens (input, output) on Groq at time of writing; used only for the cost estimate.
-PRICES = {"openai/gpt-oss-120b": (0.15, 0.60), "openai/gpt-oss-20b": (0.075, 0.30)}
+PRICES = {"openai/gpt-oss-120b": (0.15, 0.60)}
 
 
 def read_inputs(path: str) -> list[dict]:

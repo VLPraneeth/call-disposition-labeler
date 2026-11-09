@@ -1,103 +1,104 @@
 # call-disposition-labeler
 
-Labels de-identified enrollment-call transcripts for a pain clinic with **disposition**, **sub_disposition**, **lead_quality** and **next_call_at**, following the supplied policy (`assignment-v2`).
+Labels enrollment-call transcripts for Aster Vale Pain Clinic with **disposition**, **sub_disposition**, **lead_quality** and **next_call_at**, following the supplied label policy (`assignment-v2`).
 
-**Design:** an open LLM on Groq reads the call and answers small, evidence-backed questions. Plain Python then applies the published rules: precedence, valid label pairs, lead-quality order and calendar arithmetic. The LLM never does date math and never outputs a final label. Each call is read 5 times (temperature 0.6), and the labels are decided by per-field majority vote.
+## How it works
+
+1. **LLM step (Groq, `openai/gpt-oss-120b`):** the model reads one transcript and answers small, evidence-backed questions in a strict JSON schema. Examples: is there a relevant pain need, was a consultation actually confirmed, what is the main unresolved blocker, was a callback time agreed and in which exact words. It never outputs a final label and never does date arithmetic.
+2. **Python step:** deterministic code applies the policy: outcome precedence (D1–D6), valid disposition/sub-disposition pairs and tie-breaks, the lead-quality order, and the callback rules (F1–F12), resolving times against `call_started_at`.
+3. **Vote and validate:** each call is read 5 times (temperature 0.6, different seeds). Each field is decided by majority vote, and the output is validated against the contract.
 
 ```
-transcript ─► LLM ×5 samples (strict JSON schema) ─► facts + verbatim evidence quotes
-                                            │
-                     Python (labeler/decide.py, labeler/timeparse.py)
-                     D1–D6 precedence · SUB pairs & tie-breaks · LQ order · F1–F12 callback rules
-                                            │
-                     majority vote · validate contract ─► {"transcript_id", "disposition", "sub_disposition",
-                                           "lead_quality", "next_call_at"}
+transcript ─► gpt-oss-120b ×5 (strict JSON schema) ─► facts + verbatim evidence quotes
+                                     │
+                 Python rules (labeler/decide.py, labeler/timeparse.py)
+                                     │
+                 majority vote · contract validation ─► prediction JSONL
 ```
 
-## Run it (one command)
+## Run it
 
-Requires **Python ≥ 3.10**. There are **no third-party runtime dependencies**: the runner uses only the standard library, including the HTTP client. `openpyxl` is needed only for the one-off workbook conversion script.
+Requires **Python 3.10+** (tested with 3.15). The runner uses only the standard library, so there is nothing to install.
 
 ```bash
-cp .env.example .env                 # then put your key in .env:  GROQ_API_KEY=gsk_...
+cp .env.example .env          # then set GROQ_API_KEY=gsk_... in .env
 python run.py --input path/to/inputs.jsonl --output path/to/predictions.jsonl
 ```
 
-- **API key:** read from the `GROQ_API_KEY` environment variable if set, otherwise from `.env` in the project root (next to `run.py`), which works from any working directory. `.env` is git-ignored.
-- **Input:** JSONL with `transcript_id`, `call_started_at`, `timezone`, `transcript`. Any other field, including gold labels, is dropped before processing.
-- **Output:** JSONL, one object per input in input order, with exactly the five contract keys. `next_call_at` is `"YYYY-MM-DDTHH:MM:SS+05:30"` or JSON `null`.
-- **Run log:** `<output>.log.jsonl` with per-record extracted facts and evidence, decision trace, token usage and timings, plus a summary line with runtime, tokens and estimated cost.
-- **Optional flags:** `--workers N` (parallel requests on paid tiers), `--timeout`, `--retries`, `--max-daily-wait`, `--model` (Groq model ID), `--reasoning-effort`, `--ids` (restrict to a list), `--samples N` / `--temperature T` / `--seed S` (default 5 / 0.6 / 7; `--samples 1 --temperature 0` is a 5× cheaper greedy mode, about 2 points lower), `--max-completion-tokens`.
+- **API key:** `GROQ_API_KEY` from the environment if set, otherwise from `.env` in the project root (next to `run.py`). `.env` is git-ignored.
+- **Input:** JSONL with `transcript_id`, `call_started_at`, `timezone`, `transcript`. Any other field (including gold labels) is dropped before processing.
+- **Output:** one JSON object per input, in input order, with exactly `transcript_id`, `disposition`, `sub_disposition`, `lead_quality`, `next_call_at` (`"YYYY-MM-DDTHH:MM:SS+05:30"` or JSON `null`).
+- **Run log:** `<output>.log.jsonl` holds the extracted facts and evidence, the decision trace, token usage and timings per record, plus a summary line with runtime, tokens and estimated cost.
+- **Optional flags:** `--workers N` (parallel requests), `--samples N`, `--temperature T`, `--seed S`, `--reasoning-effort`, `--max-completion-tokens`, `--timeout`, `--retries`, `--max-daily-wait`, `--ids FILE` (run a subset), `--log PATH`.
+- **Groq usage:** a 50-call run uses about 1.46M tokens (5 reads per call). That needs a paid Groq tier; the free tier allows 200k tokens per day. `--samples 1 --temperature 0` is 5× cheaper and scores about 2 points lower.
 
-Every input ID always receives a valid prediction. If the model is unreachable or returns unusable output after all retries, a documented majority-class fallback is written and flagged in the log.
-
-## Results (details in [reports/ERROR_ANALYSIS.md](reports/ERROR_ANALYSIS.md))
-
-| Set | disposition | sub_disposition | lead_quality | next_call_at | exact | score /70 |
-|---|---|---|---|---|---|---|
-| Dev, 30 calls | 96.7% | 83.3% | 93.3% | 93.3% | 76.7% | 63.8 |
-| **Holdout, 20 calls** | 100.0% | 70.0% | 95.0% | 95.0% | 60.0% | **62.2** |
-| **All 50** (`outputs/predictions.jsonl`) | 98.0% | 78.0% | 94.0% | 94.0% | 70.0% | **63.2** |
-| All 50, repeat with new seeds | 96.0% | 78.0% | 92.0% | 92.0% | 72.0% | 62.2 |
-| Synthetic stress set, 18 calls | 100% | 100% | 100% | 100% | 100% | 70.0 |
-
-Single greedy sample (the earlier setup): 59.4–61.6 across repeat runs. The 5-sample vote adds about 2 points. Low, medium and high thinking score the same within noise; low is used because it is cheapest and fastest. Putting the full rulebook in the prompt made results worse (57.3). Every variant tried is described in the report; only the final version is kept in the code.
-50 calls: 418 s with 4 workers, 1.46M tokens, **≈ $0.30**, 0 fallbacks.
-
-**Provider note:** the system runs on Groq. Groq's free tier for `gpt-oss-120b` allows 8k tokens per minute and 200k per day, while one 50-call run uses about 1.46M tokens. So `outputs/predictions.jsonl` was produced by this same code, prompt and settings with the same open model weights (`gpt-oss-120b`) served through Fireworks' OpenAI-compatible endpoint; the endpoint is recorded in `outputs/predictions.log.jsonl`. On 17 calls run on both providers, the outputs agreed on 15/17 with equal accuracy (the same agreement as two runs on one provider). On a paid Groq tier, the one command above reproduces the run.
+Every input ID always gets a valid prediction. If the model is unreachable or returns unusable output after all retries, a fixed fallback (Follow-up Required / Travel Constraint / Medium / call date + 3 days at 11:00) is written and flagged in the log.
 
 ## Model and generation settings
 
 | Setting | Value |
 |---|---|
 | Provider / endpoint | Groq, `https://api.groq.com/openai/v1/chat/completions` |
-| Model ID | `openai/gpt-oss-120b` (open-weight) |
-| temperature / top_p / seed | 0.6 / 1.0 / 7 (sample j uses seed 7 + 100·j) |
-| samples per call | 5, per-field majority vote (disposition first, then the other fields among samples with that disposition) |
-| reasoning_effort | `low` (medium/high tested: same accuracy, 1.4–4× the cost) |
+| Model ID | `openai/gpt-oss-120b` |
+| temperature / top_p | 0.6 / 1.0 |
+| seed | 7; read j of a call uses seed 7 + 100·j |
+| Reads per call | 5, per-field majority vote (disposition first, then the other fields among the reads with that disposition) |
+| reasoning_effort | `low` |
 | max_completion_tokens | 4000 |
-| response_format | `json_schema`, `strict: true` (schema in `labeler/schema.py`) |
+| response_format | `json_schema` with `strict: true` (schema in `labeler/schema.py`) |
+| JSON parsing | parse the JSON (code fences stripped), normalise missing/invalid fields to safe defaults, validate the output contract; if it fails, re-ask with a different seed (2 attempts), then use the fallback |
 | Request timeout | 120 s |
-| HTTP retries | 6, exponential backoff + jitter; honours `retry-after` / rate-limit reset headers on 429; retries 5xx and network errors |
-| Rate limiting | waits proactively when the per-minute token budget is nearly spent; waits up to `--max-daily-wait` (1800 s) if a daily quota frees up soon |
-| JSON parse retries | 2 (re-ask with a different seed), then fallback |
+| HTTP retries | 6, exponential backoff with jitter; honours `retry-after` and rate-limit reset headers on 429; retries 5xx and network errors |
+| Rate limiting | waits when the per-minute token budget is nearly used; waits up to 1800 s (`--max-daily-wait`) if a daily quota frees up soon |
+
+## Results on the 50 labeled calls
+
+The 50 calls were split once into a dev set (30, used for development) and a holdout set (20), stratified by label (`data/split.json`).
+
+| Set | disposition | sub_disposition | lead_quality | next_call_at | exact match | score /70 |
+|---|---|---|---|---|---|---|
+| Dev, 30 calls | 96.7% | 83.3% | 93.3% | 93.3% | 76.7% | 63.8 |
+| Holdout, 20 calls | 100.0% | 70.0% | 95.0% | 95.0% | 60.0% | 62.2 |
+| **All 50** (`outputs/predictions.jsonl`) | 98.0% | 78.0% | 94.0% | 94.0% | 70.0% | **63.2** |
+
+Failure patterns, changes made, runtime, tokens and cost are in [reports/ERROR_ANALYSIS.md](reports/ERROR_ANALYSIS.md).
+
+**Where the submitted predictions were run:** Groq's free tier is too small for a 50-call run (see above). `outputs/predictions.jsonl` was therefore generated by this exact code, prompt and settings with the same open model weights (`gpt-oss-120b`) served through Fireworks' OpenAI-compatible API; the log records the endpoint. With a paid Groq key, the command above runs on Groq unchanged.
 
 ## Repository layout
 
 ```
-run.py                     CLI: input JSONL -> prediction JSONL
-labeler/prompts.py         complete system + user prompt templates (versioned)
-labeler/schema.py          intermediate facts JSON schema, normalisation, output contract validation
-labeler/decide.py          deterministic label rules (each branch cites the policy rule)
-labeler/timeparse.py       callback/appointment time resolution (F1-F12) + verbatim-words repair
-labeler/groq_client.py     stdlib Groq client: retries, timeouts, rate-limit pacing
-labeler/pipeline.py        record -> facts -> labels -> validated prediction (+ fallback)
-scripts/convert_xlsx.py    workbook tab -> data/inputs.jsonl + data/gold.jsonl
-scripts/split.py           fixed stratified dev (30) / holdout (20) split, seed 20261108
-scripts/evaluate.py        scorer mirroring the published scoring contract
-scripts/make_synthetic.py  18 hand-labelled stress calls for labels absent from the 50
-tests/                     56 unit tests (rulebook boundary examples EX1-EX6 and F-rules)
-reports/ERROR_ANALYSIS.md  results, failure patterns, iteration log, runtime/tokens/cost
-outputs/predictions.jsonl  final predictions for the 50 supplied calls (+ .log.jsonl: facts, evidence, tokens, cost)
+run.py                    CLI: input JSONL -> prediction JSONL
+labeler/prompts.py        complete system and user prompt templates
+labeler/schema.py         facts JSON schema, normalisation, output-contract validation
+labeler/decide.py         deterministic label rules (each branch cites its policy rule)
+labeler/timeparse.py      callback/appointment time resolution (F1-F12)
+labeler/groq_client.py    Groq client: API key loading, retries, timeouts, rate-limit pacing
+labeler/pipeline.py       transcript -> facts -> labels -> vote -> validated prediction
+scripts/convert_xlsx.py   workbook tab -> data/inputs.jsonl + data/gold.jsonl
+scripts/split.py          fixed stratified dev/holdout split (seed 20261108)
+scripts/evaluate.py       scorer that mirrors the published scoring contract
+tests/                    56 unit tests (policy rules, boundary examples EX1-EX6, time rules)
+data/                     the 50 calls as JSONL (inputs and gold), split
+outputs/                  predictions for the 50 calls + run log
+reports/ERROR_ANALYSIS.md results, failure patterns, changes made, runtime/tokens/cost
 ```
 
 ## Reproduce the evaluation
 
 ```bash
-pip install openpyxl==3.1.5                               # only for the conversion step
-python scripts/convert_xlsx.py "<workbook>.xlsx" data      # inputs.jsonl + gold.jsonl
-python scripts/split.py                                    # data/split.json (seeded)
-python -m unittest discover -s tests -t .                  # 56 tests, offline
-python run.py --input data/inputs.jsonl --output outputs/predictions.jsonl
+pip install openpyxl==3.1.5                              # only for the conversion step
+python scripts/convert_xlsx.py "<workbook>.xlsx" data     # data/inputs.jsonl + data/gold.jsonl
+python scripts/split.py                                   # data/split.json
+python -m unittest discover -s tests -t .                 # 56 tests, offline
+python run.py --input data/inputs.jsonl --output outputs/predictions.jsonl --workers 4
+python scripts/evaluate.py outputs/predictions.jsonl data/gold.jsonl                         # all 50
 python scripts/evaluate.py outputs/predictions.jsonl data/gold.jsonl --ids data/split.json:holdout
-python run.py --input data/synthetic/inputs.jsonl --output outputs/synthetic_predictions.jsonl
-python scripts/evaluate.py outputs/synthetic_predictions.jsonl data/synthetic/gold.jsonl
 ```
 
 ## Rules compliance
 
-- Only the four input fields reach the workflow, and gold labels are never inputs.
-- No lookups by ID, transcript hash or personal details, and no response caching.
-- No external search or source-system access, and no manual correction of predictions.
-- Prompt examples come from the policy's own boundary definitions. No supplied transcript is embedded in the prompt.
-- No secrets are in the repository: `.env` is git-ignored and the key is read from the environment.
+- Only the four input fields reach the workflow; gold labels are never inputs.
+- No per-record hardcoding, lookups by ID, transcript hash or personal details, external search or manual correction.
+- No supplied transcript is embedded in the prompt; its examples are short generic phrases.
+- No secrets in the repository: the key is read from the environment or a git-ignored `.env`.

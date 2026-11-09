@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 
 from .decide import _days_at_11, decide
 from .groq_client import GroqClient, GroqError
-from .prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE
+from .prompts import SYSTEM_PROMPT, USER_TEMPLATE
 from .schema import FACTS_SCHEMA, OUTPUT_KEYS, normalise_facts, validate_output
 from .timeparse import parse_call_time
 
@@ -25,11 +25,10 @@ class Settings:
     temperature: float = 0.6                  # >0 so the 5 samples differ (self-consistency vote)
     top_p: float = 1.0
     seed: int = 7
-    reasoning_effort: str | None = "low"      # gpt-oss only; low = medium accuracy at ~half the tokens (round 4)
+    reasoning_effort: str | None = "low"      # gpt-oss reasoning depth
     max_completion_tokens: int = 4000
     parse_attempts: int = 2                   # LLM re-asks when output is not valid JSON
     samples: int = 5                          # independent samples per call; >1 = per-field majority vote
-    prompt_version: str = PROMPT_VERSION      # recorded in the run log
 
 
 def build_messages(rec: dict) -> list[dict]:
@@ -44,7 +43,7 @@ def build_body(rec: dict, s: Settings) -> dict:
             "seed": s.seed, "max_completion_tokens": s.max_completion_tokens,
             "response_format": {"type": "json_schema",
                                 "json_schema": {"name": "call_facts", "strict": True, "schema": FACTS_SCHEMA}}}
-    if s.reasoning_effort and "gpt-oss" in s.model:
+    if s.reasoning_effort:
         body["reasoning_effort"] = s.reasoning_effort
     return body
 
