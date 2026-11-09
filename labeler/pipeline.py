@@ -27,7 +27,7 @@ class Settings:
     temperature: float = 0.6                  # >0 so the 5 samples differ (self-consistency vote)
     top_p: float = 1.0
     seed: int = 7
-    reasoning_effort: str | None = "medium"   # gpt-oss only; None for other models
+    reasoning_effort: str | None = "low"      # gpt-oss only; low = medium accuracy at ~half the tokens (round 4)
     max_completion_tokens: int = 4000
     structured_output: str = "json_schema"    # "json_schema" (strict) | "json_object"
     parse_attempts: int = 2                   # LLM re-asks when output is not valid JSON

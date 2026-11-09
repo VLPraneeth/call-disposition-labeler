@@ -10,7 +10,7 @@ from datetime import datetime, time, timedelta
 
 from .timeparse import IST, day_offset, format_ts, parse_call_time, repair_slot, resolve_slot
 
-RULES = {"f12_event": True, "llm_followup": True, "llm_next_step": True}
+RULES = {"f12_event": True, "need_no_invalid": True, "llm_followup": True, "llm_next_step": True}
 
 # SUB tie-break orders
 INVALID_ORDER = ["test_enquiry", "wrong_contact", "no_pain_need", "policy_exclusion", "outside_service_area"]
@@ -40,6 +40,9 @@ def decide(facts: dict, call_started_at: str, rules: dict | None = None) -> dict
 
     # Invalid reasons, with a consistency guard: "no_pain_need" cannot coexist with an established need.
     invalid = [r for r in facts["invalid"]["reasons"] if not (r == "no_pain_need" and need == "yes")]
+    # ...and the mirror (D1): reliable evidence of no pain-care need IS the No Pain Need reason.
+    if need == "no" and "no_pain_need" not in invalid and rules["need_no_invalid"]:
+        invalid.append("no_pain_need")
     refusal = facts["refusal"]["final"]
     appt = facts["appointment"]
     blockers = facts["blockers"]

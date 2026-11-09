@@ -1,45 +1,44 @@
 # Error analysis
 
-Final system: model `gpt-oss-120b` (open-weight), prompt `p3`, reasoning_effort medium, strict JSON schema. **5 samples at temperature 0.6 (seeds 7, 107, …, 407), per-field majority vote**, plus the deterministic rules in `labeler/decide.py` (including the F12 rule added in round 3).
-Scores use the published contract: disposition 15, sub_disposition 20 (credited only with the correct parent), lead_quality 15, next_call_at 20 (exact string or null).
+Final system: model `gpt-oss-120b` (open-weight), prompt `p3`, **reasoning_effort low**, strict JSON schema. **5 samples at temperature 0.6 (seeds 7, 107, …, 407), per-field majority vote**, plus the deterministic rules in `labeler/decide.py` (including the F12 and need/no-pain-need consistency rules added in rounds 3–4).
+Scores use the published contract: disposition 15, sub_disposition 20 (credited only with the correct parent), lead_quality 15, next_call_at 20 (exact string or null). "Exact" = all four fields correct for a call.
 
 ## 1. Results
 
 | Set | N | disposition | sub_disposition | lead_quality | next_call_at | exact match | score /70 |
 |---|---|---|---|---|---|---|---|
-| Dev (used for iteration) | 30 | 100.0% | 86.7% | 100.0% | 93.3% | 80.0% | **66.0** |
-| Holdout | 20 | 95.0% | 65.0% | 90.0% | 85.0% | 55.0% | **57.8** |
-| All 50 (= `outputs/predictions.jsonl`) | 50 | 98.0% | 78.0% | 96.0% | 90.0% | 70.0% | **62.7** |
-| All 50, independent repeat (new seeds 1007…) | 50 | 98.0% | 76.0% | 98.0% | 90.0% | 70.0% | 62.6 |
+| Dev (used for iteration) | 30 | 96.7% | 83.3% | 93.3% | 93.3% | 76.7% | **63.8** |
+| Holdout | 20 | 100.0% | 70.0% | 95.0% | 95.0% | 60.0% | **62.2** |
+| All 50 (= `outputs/predictions.jsonl`) | 50 | 98.0% | 78.0% | 94.0% | 94.0% | 70.0% | **63.2** |
+| All 50, independent repeat (new seeds 1007…) | 50 | 96.0% | 78.0% | 92.0% | 92.0% | 72.0% | 62.2 |
 | Synthetic stress set (hand-labelled before any run) | 18 | 100% | 100% | 100% | 100% | 100% | 70.0 |
 
-The previous submission (single greedy sample) scored 61.2 on all 50. Repeat runs of that greedy setup scored 61.2, 60.5 and 59.4, with the F12 rule 61.6, 60.9 and 59.4 (mean about 60.6).
+Progress on all 50: round-1 submission (single greedy sample, medium effort) 61.2 → round 3 (5-vote, medium) 62.7 / 62.6 → **final (5-vote, low) 63.2 / 62.2**. Repeat greedy runs scored 59.4–61.6, so differences under about 1 point are noise.
 
 - **Split:** the 50 calls were split once, stratified on (disposition, sub_disposition), seed 20261108 (`data/split.json`). Prompt and rule changes were driven only by dev errors.
-- **Holdout caveat:** the holdout was first scored once at the end of round 1 (57.8). Rounds 2 and 3 were *selected* using all-50 and holdout scores as a guard against overfitting, so the holdout is no longer perfectly clean. The round-3 change (voting) is a generic variance-reduction method, not tuned to any transcript.
-- **Expected score on unseen calls:** about **58–62 / 70**. The dev–holdout gap (about 8 points) is partly overfitting and partly that the holdout happens to hold harder calls (7 of the 11 sub-disposition misses are there).
-- **Synthetic set:** 18 calls that cover labels absent or rare in the 50, such as Wrong Contact, Test Enquiry, Policy Exclusion, Outside Service Area, Do Not Contact, Online, Rescheduled, Unable to Assess, refusal-then-booking, amended callback, "in 2 hours" and "parso shaam". All are correct with the final setup. This checks the deterministic rules and the rare branches; it is not a realism benchmark.
+- **Holdout caveat:** the holdout was first scored once at the end of round 1 (57.8). Later rounds were *selected* using all-50 and holdout scores as a guard against overfitting, so the holdout is no longer perfectly clean. The changes kept in rounds 3–4 are generic (sampling, thinking level, two literal rule implementations), not tuned to any transcript.
+- **Expected score on unseen calls:** about **60–63 / 70, with about 70% of calls fully correct**.
+- **Synthetic set:** 18 calls that cover labels absent or rare in the 50, such as Wrong Contact, Test Enquiry, No Pain Need, Policy Exclusion, Outside Service Area, Do Not Contact, Online, Rescheduled, Unable to Assess, refusal-then-booking, amended callback, "in 2 hours" and "parso shaam". All are correct with the final setup. This checks the deterministic rules and the rare branches; it is not a realism benchmark.
 
 **Stability.**
-- Two final-setup runs with different seeds agree on all four fields for 47/50 calls (62.7 vs 62.6).
-- Two greedy runs agreed on 46/50 calls and their scores varied by up to 2.2 points across days.
+- Two final-setup runs with different seeds score 63.2 and 62.2 (70% and 72% exact).
+- Pooling 10 or 20 samples across runs converges to 62.6 / 70% exact. The vote has reached the model's consensus reading, so more samples will not help.
 - At temperature 0 the seed has no effect (all "votes" are identical). Voting only helps when the samples can differ, which is why the final setup uses temperature 0.6.
 
 ## 2. Failure patterns (all 50, final run)
 
-15 calls have at least one wrong field. Almost all errors are **judgement calls on the main blocker**. The date arithmetic and the precedence rules did not fail.
+15 calls have at least one wrong field. On most of them 80–100% of samples agree with each other and disagree with the gold, so the errors are **systematic readings of the call, not noise**. The date arithmetic and the precedence rules did not fail.
 
 | Pattern | Calls | Field(s) | What happened |
 |---|---|---|---|
-| Travel ↔ Family Discussion | 001, 020, 034, 049 | sub | The customer says "I'll ask my son/wife", but the real issue is someone's availability or schedule (or the reverse). 049: cost vs family. This is still the top confusion. |
-| Treatment / Current-treatment concern under-detected | 014, 030, 038, 047 | sub | A doubt about the procedure or an ongoing therapy is stated mid-call, but the ending stresses logistics or cost, so the model picks that blocker as main. |
-| Main-blocker choice vs final next step | 013, 032 | sub | The gold uses the final next step (Information Requested, Vague Deferral). The model keeps a blocker raised mid-call (travel, cost) that the agent had answered. |
-| Postponement vs plain follow-up (+3d vs +1d) | 031, 034, 048 | next_call_at | Whether the ending counts as a vague postponement (+3 days 11:00) or not (+1 day 11:00). 048 reads as a postponement ("I'll call you back"), yet the gold has +1 day. |
-| Callback day | 040 | next_call_at | "Should I call next week?" + a conditional "yes, call in between" was not taken as agreed; the gold has the following Monday. |
-| Conditional refusal read as final | 042 | all four | Doubts about the treatment plus "Forget it" were read as an Explicit Refusal. The gold keeps the call open as Treatment Concern. This single call costs 1.4 of the 70 points. |
-| Lead quality boundary | 003 | LQ | "I will consult my wife" was read as deferring over 30 days (Low). |
+| Travel ↔ Family Discussion | 001, 034 | sub | The customer says "my husband is away" / "she hasn't come home yet". One reads as availability (Travel), the other as a family decision; the model reads them the other way round. |
+| Treatment / Current-treatment concern under-detected | 014, 018, 030, 038, 047 | sub | A doubt about the procedure or an ongoing therapy is stated mid-call, but the ending stresses logistics or cost, so the model picks that blocker as main. |
+| Main-blocker choice vs final next step | 026, 032, 049 | sub | The gold uses the final next step (Specific Callback, Vague Deferral) or the other blocker; the model keeps a blocker raised mid-call. |
+| Postponement vs plain follow-up (+3d vs +1d), callback day | 040, 048 | next_call_at | 048 reads as a postponement ("I'll call you back"), yet the gold has +1 day. 040: "Should I call next week?" + a conditional "yes, call in between" was not taken as agreed. |
+| Booking read as unconfirmed | 037 | all four | The consultation slot was confirmed in the gold; the majority of low-effort samples read it as unconfirmed. |
+| Lead quality boundary | 022, 042 | LQ | "I will call you myself if I want to come" (Low) read as unclear; 042 (Not Assessable) read as Low. |
 
-Voting removed most next_call_at errors (8 → 5) and two lead-quality errors. Sub-disposition (11 calls) is now the main source of the 7.3 lost points; it is a reading-the-call problem, not a rules problem.
+Five calls with two competing blockers (014, 020, 025, 038, 043) do not follow one fixed order in the gold: treatment wins twice, and travel, cost and family once each. So no general code rule ("treatment beats travel") can fix them without fitting these calls and contradicting the policy's own tie-break order.
 
 ## 3. Iteration log
 
@@ -95,24 +94,42 @@ Notes:
 - More labelled examples of the confused boundaries: Travel vs Family, "answered question vs real blocker", and +1d vs +3d endings.
 - A second-pass verifier only for refusals (D2 vs a conditional objection; AVT-042).
 
+### Fourth round: thinking level, sampling settings, full rulebook in the prompt
+
+All runs use 5 samples per call with the majority vote. Scores are on all 50, with exact match in brackets.
+
+| Variant | All 50 | Dev | Holdout | Cost / 50 calls | Time (4 workers) | Kept? |
+|---|---|---|---|---|---|---|
+| medium effort, temperature 0.6 (round 3) | 62.7 (70%), 62.6 (70%) | 66.0, 65.3 | 57.8, 58.5 | $0.43 | 867 s | – |
+| **low effort, temperature 0.6** | **63.2 (70%), 62.2 (72%)** | 63.8, 64.5 | **62.2, 58.8** | **$0.30** | **418 s** | **yes** |
+| high effort, temperature 0.6 (24k token budget, 600 s timeout, 10 workers) | 61.2 (70%) | 62.3 | 59.5 | $1.18 | 1339 s | no |
+| medium effort, temperature 1.0 (gpt-oss default) | 60.5 (66%) | 61.8 | 58.5 | $0.43 | 830 s | no |
+| **p9:** p3 plus the **entire official rulebook verbatim** (P0–EX6, about 15k extra characters) | 57.3 (54%) | 59.8 | 53.5 | $0.52 | 780 s | no |
+| Pooled vote: 10 samples (medium or low) or 20 (both) | 61.8–62.6 (68–70%) | – | – | – | – | no gain |
+
+- **Thinking level:** low, medium and high give the same accuracy within noise. Low uses about half the reasoning tokens of medium, and high about 4× medium (1.64M completion tokens for 50 calls). High no longer fails now that it has a 24k budget, but it is not more accurate. Low is kept because it is equal in accuracy and 30% cheaper, twice as fast and lighter on Groq's token limits.
+- **Full rulebook (p9):** the model has plenty of context window (128k), so length was not the problem. But the extra text made it miss postponements (+1 day instead of +3) and a real callback (029). As with p7/p8, more policy text dilutes how the model reads the transcript. The rules are already applied exactly in code.
+- **Consistency rule (code):** with low effort, one synthetic call (SYN-02, "only hair fall, no pain at all") had `relevant_pain_need = "no"` but no invalid reason in 4 of the 5 samples. D1 says reliable evidence of no pain-care need *is* Invalid Lead / No Pain Need, so `decide.py` now adds that reason whenever need = "no". This mirrors the existing guard that drops it when need = "yes". It changes nothing on the 50 and fixes the synthetic set (66.1 → 70.0).
+- **Ceiling:** more samples converge to 62.6 / 70% exact. The remaining 15 calls are systematic disagreements with the gold (section 2). Reaching 75% exact (38/50) would mean fitting these specific calls, which round 2 showed does not carry over to unseen calls.
+
 ## 4. Runtime, tokens and cost
 
 | Run | Calls | Wall time | Prompt tokens | Completion tokens | Est. cost |
 |---|---|---|---|---|---|
-| **Final (`predictions.jsonl`), 5 samples/call** | 50 | 867 s (4 workers) | 1,277,790 | 398,880 | **$0.43** |
-| Repeat with new seeds | 50 | 789 s | 1,277,790 | 399,488 | $0.43 |
-| Synthetic set, final setup | 18 | 203 s | 307,165 | 106,327 | $0.11 |
-| Greedy single sample (`--samples 1 --temperature 0`) | 50 | 232 s | 255,558 | 78,097 | $0.085 |
+| **Final (`predictions.jsonl`), low effort, 5 samples/call** | 50 | 418 s (4 workers) | 1,277,790 | 184,257 | **$0.30** |
+| Repeat with new seeds | 50 | 400 s | 1,277,790 | 185,507 | $0.30 |
+| Synthetic set, final setup | 18 | 90 s | 307,165 | 55,924 | $0.08 |
+| Greedy single sample, medium (`--samples 1 --temperature 0 --reasoning-effort medium`) | 50 | 232 s | 255,558 | 78,097 | $0.085 |
 
-- **Per call (final setup):** about 25.6k prompt and 8.0k completion tokens across 5 samples, about $0.009, about 70 s sequentially (samples run one after another per call; calls run in parallel with `--workers`).
-- **Cheap mode:** `--samples 1 --temperature 0` costs 5× less and scores about 2 points lower (about 60.6 on average).
+- **Per call (final setup):** about 25.6k prompt and 3.7k completion tokens across 5 samples, about $0.006, about 33 s sequentially (samples run one after another per call; calls run in parallel with `--workers`).
+- **Cheap mode:** `--samples 1 --temperature 0` costs about 4× less and scores about 1–2 points lower.
 - **Prices:** $0.15 / $0.60 per 1M input/output tokens. This is the published price for `gpt-oss-120b` on both Groq and Fireworks.
-- **Total API spend for the project:** about $3.45 across all logged runs, including every rejected experiment.
+- **Total API spend for the project:** about $6.30 across all logged runs, including every rejected experiment.
 
 ## 5. Provider note (read this)
 
 - **The submitted system targets Groq** (`openai/gpt-oss-120b`, `GROQ_API_KEY`), as required. Groq's other open text models today are `gpt-oss-20b` and `qwen/qwen3.8-27b`, both smaller, so the 120b model was kept.
-- **Why the experiment and final runs used Fireworks:** Groq's free tier allows 200k tokens per day per model, about 33 greedy calls (about 6 calls with 5 samples). The final predictions were therefore produced with the **same open-weight model (`accounts/fireworks/models/gpt-oss-120b`), the same prompt, settings and code**, through Fireworks' OpenAI-compatible endpoint (`--api-url` / `--api-key-env` flags).
+- **Why the experiment and final runs used Fireworks:** Groq's free tier allows 200k tokens per day per model, about 33 greedy calls (about 7 calls with 5 samples). The final predictions were therefore produced with the **same open-weight model (`accounts/fireworks/models/gpt-oss-120b`), the same prompt, settings and code**, through Fireworks' OpenAI-compatible endpoint (`--api-url` / `--api-key-env` flags).
 - **Equivalence check:** on the 17 calls finished on Groq in round 1, Groq and Fireworks gave identical outputs on 15/17, with the same accuracy. That is the same agreement level as two runs on one provider.
 - **Earlier dev iterations** (v1, v2) ran on Groq.
-- **Reliability on Groq:** the client honours Groq's `retry-after` headers and daily-quota messages (it waits up to `--max-daily-wait` before falling back). The final setup needs about 1.7M tokens for 50 calls, so it needs a paid Groq tier. On that tier, `python run.py --input … --output …` runs unchanged.
+- **Reliability on Groq:** the client honours Groq's `retry-after` headers and daily-quota messages (it waits up to `--max-daily-wait` before falling back). The final setup needs about 1.46M tokens for 50 calls, so it needs a paid Groq tier. On that tier, `python run.py --input … --output …` runs unchanged.

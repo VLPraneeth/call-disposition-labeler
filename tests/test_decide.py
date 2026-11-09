@@ -37,6 +37,10 @@ class TestDecide(unittest.TestCase):
         pred = {"transcript_id": "X", **{k: out[k] for k in ("disposition", "sub_disposition", "lead_quality", "next_call_at")}}
         self.assertEqual(validate_output(pred), [])
 
+    def test_need_no_implies_no_pain_need_invalid(self):
+        f = facts(patient_need__relevant_pain_need="no")
+        self.check(f, "Invalid Lead", "No Pain Need", "Not Qualified", None)
+
     def test_f12_next_week_after_event_is_vague(self):
         f = facts(callback__proposal="I'll call you next week after Dussehra", callback__acknowledgement="Okay",
                   callback__agreed=False, callback__slot=slot(words="next week after Dussehra", day_ref="next_week"))

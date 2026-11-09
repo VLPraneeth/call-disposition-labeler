@@ -26,7 +26,7 @@ python run.py --input path/to/inputs.jsonl --output path/to/predictions.jsonl
 - **Input:** JSONL with `transcript_id`, `call_started_at`, `timezone`, `transcript`. Any other field, including gold labels, is dropped before processing.
 - **Output:** JSONL, one object per input in input order, with exactly the five contract keys. `next_call_at` is `"YYYY-MM-DDTHH:MM:SS+05:30"` or JSON `null`.
 - **Run log:** `<output>.log.jsonl` with per-record extracted facts and evidence, decision trace, token usage and timings, plus a summary line with runtime, tokens and estimated cost.
-- **Optional flags:** `--workers N` (parallel requests on paid tiers), `--timeout`, `--retries`, `--max-daily-wait`, `--model`, `--reasoning-effort`, `--ids` (restrict to a list), `--cache-dir` (development response cache; off by default), `--api-url` / `--api-key-env` (any OpenAI-compatible endpoint; Groq is the default), `--samples N` / `--temperature T` / `--seed S` (default 5 / 0.6 / 7; `--samples 1 --temperature 0` is a 5× cheaper greedy mode, about 2 points lower), `--prompt-version` (p3 default; p7/p8 are the rejected experiments), `--max-completion-tokens`.
+- **Optional flags:** `--workers N` (parallel requests on paid tiers), `--timeout`, `--retries`, `--max-daily-wait`, `--model`, `--reasoning-effort`, `--ids` (restrict to a list), `--cache-dir` (development response cache; off by default), `--api-url` / `--api-key-env` (any OpenAI-compatible endpoint; Groq is the default), `--samples N` / `--temperature T` / `--seed S` (default 5 / 0.6 / 7; `--samples 1 --temperature 0` is a 5× cheaper greedy mode, about 2 points lower), `--prompt-version` (p3 default; p7/p8/p9 are the rejected experiments), `--max-completion-tokens`.
 
 Every input ID always receives a valid prediction. If the model is unreachable or returns unusable output after all retries, a documented majority-class fallback is written and flagged in the log.
 
@@ -34,16 +34,16 @@ Every input ID always receives a valid prediction. If the model is unreachable o
 
 | Set | disposition | sub_disposition | lead_quality | next_call_at | exact | score /70 |
 |---|---|---|---|---|---|---|
-| Dev, 30 calls | 100.0% | 86.7% | 100.0% | 93.3% | 80.0% | 66.0 |
-| **Holdout, 20 calls** | 95.0% | 65.0% | 90.0% | 85.0% | 55.0% | **57.8** |
-| **All 50** (`outputs/predictions.jsonl`) | 98.0% | 78.0% | 96.0% | 90.0% | 70.0% | **62.7** |
-| All 50, repeat with new seeds | 98.0% | 76.0% | 98.0% | 90.0% | 70.0% | 62.6 |
+| Dev, 30 calls | 96.7% | 83.3% | 93.3% | 93.3% | 76.7% | 63.8 |
+| **Holdout, 20 calls** | 100.0% | 70.0% | 95.0% | 95.0% | 60.0% | **62.2** |
+| **All 50** (`outputs/predictions.jsonl`) | 98.0% | 78.0% | 94.0% | 94.0% | 70.0% | **63.2** |
+| All 50, repeat with new seeds | 96.0% | 78.0% | 92.0% | 92.0% | 72.0% | 62.2 |
 | Synthetic stress set, 18 calls | 100% | 100% | 100% | 100% | 100% | 70.0 |
 
-Single greedy sample (the earlier setup): 59.4–61.6 across repeat runs. The 5-sample vote adds about 2 points and is stable across seed sets (62.7 / 62.6).
-50 calls: 867 s with 4 workers, 1.68M tokens, **≈ $0.43**, 0 fallbacks.
+Single greedy sample (the earlier setup): 59.4–61.6 across repeat runs. The 5-sample vote adds about 2 points. Low, medium and high thinking score the same within noise; low is used because it is cheapest and fastest. Putting the full rulebook in the prompt made results worse (57.3). Every variant is in the report.
+50 calls: 418 s with 4 workers, 1.46M tokens, **≈ $0.30**, 0 fallbacks.
 
-**Provider note:** the system targets Groq. Groq's free tier caps `gpt-oss-120b` at 200k tokens per day (about 6 calls at 5 samples each), so the final 50-call predictions were generated with the **same model, prompt, settings and code** on Fireworks' OpenAI-compatible endpoint:
+**Provider note:** the system targets Groq. Groq's free tier caps `gpt-oss-120b` at 200k tokens per day (about 7 calls at 5 samples each), so the final 50-call predictions were generated with the **same model, prompt, settings and code** on Fireworks' OpenAI-compatible endpoint:
 
 ```bash
 python run.py --input data/inputs.jsonl --output outputs/predictions.jsonl   --model accounts/fireworks/models/gpt-oss-120b   --api-url https://api.fireworks.ai/inference/v1/chat/completions --api-key-env FIREWORKS_API_KEY --workers 4
@@ -59,7 +59,7 @@ On 17 calls run on both providers (greedy setup), the two providers agreed on 15
 | Model ID | `openai/gpt-oss-120b` (open-weight); final predictions: same weights as `accounts/fireworks/models/gpt-oss-120b` |
 | temperature / top_p / seed | 0.6 / 1.0 / 7 (sample j uses seed 7 + 100·j) |
 | samples per call | 5, per-field majority vote (disposition first, then the other fields among samples with that disposition) |
-| reasoning_effort | `medium` |
+| reasoning_effort | `low` (medium/high tested: same accuracy, 1.4–4× the cost) |
 | max_completion_tokens | 4000 |
 | response_format | `json_schema`, `strict: true` (schema in `labeler/schema.py`) |
 | Request timeout | 120 s |
@@ -82,7 +82,7 @@ scripts/split.py           fixed stratified dev (30) / holdout (20) split, seed 
 scripts/evaluate.py        scorer mirroring the published scoring contract
 scripts/rescore.py         re-apply current rules to logged facts (no API calls)
 scripts/make_synthetic.py  18 hand-labelled stress calls for labels absent from the 50
-tests/                     58 unit tests (rulebook boundary examples EX1-EX6 and F-rules)
+tests/                     59 unit tests (rulebook boundary examples EX1-EX6 and F-rules)
 reports/ERROR_ANALYSIS.md  results, failure patterns, iteration log, runtime/tokens/cost
 outputs/predictions.jsonl  final predictions for the 50 supplied calls
 ```
@@ -93,7 +93,7 @@ outputs/predictions.jsonl  final predictions for the 50 supplied calls
 pip install openpyxl==3.1.5                               # only for the conversion step
 python scripts/convert_xlsx.py "<workbook>.xlsx" data      # inputs.jsonl + gold.jsonl
 python scripts/split.py                                    # data/split.json (seeded)
-python -m unittest discover -s tests -t .                  # 58 tests, offline
+python -m unittest discover -s tests -t .                  # 59 tests, offline
 python run.py --input data/inputs.jsonl --output outputs/predictions.jsonl
 python scripts/evaluate.py outputs/predictions.jsonl data/gold.jsonl --ids data/split.json:holdout
 python run.py --input data/synthetic/inputs.jsonl --output outputs/synthetic_predictions.jsonl

@@ -54,7 +54,7 @@ def main(argv=None) -> int:
     p.add_argument("--api-key-env", default="GROQ_API_KEY", help="environment variable holding the API key")
     p.add_argument("--reasoning-effort", default=Settings.reasoning_effort, help="gpt-oss: low|medium|high; 'none' to omit")
     p.add_argument("--max-completion-tokens", type=int, default=Settings.max_completion_tokens)
-    p.add_argument("--prompt-version", default=Settings.prompt_version, help="p3 (default) | p7 | p8")
+    p.add_argument("--prompt-version", default=Settings.prompt_version, help="p3 (default) | p7 | p8 | p9")
     p.add_argument("--temperature", type=float, default=Settings.temperature,
                    help="sampling temperature (0 = greedy; use >0 with --samples for self-consistency voting)")
     p.add_argument("--seed", type=int, default=Settings.seed, help="base seed (sample j uses seed + 100*j)")
